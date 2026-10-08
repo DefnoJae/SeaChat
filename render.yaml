@@ -1,0 +1,23 @@
+# Creates a paid web service and disk. Review Render's estimate before applying.
+services:
+  - type: web
+    name: seachat
+    runtime: node
+    plan: 0.5c-512mb
+    numInstances: 1
+    buildCommand: node --version
+    startCommand: node server.mjs
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 24.19.0
+      - key: HOST
+        value: 0.0.0.0
+      - key: DB_PATH
+        value: /var/data/chat.sqlite
+      - key: ADMIN_TOKEN
+        generateValue: true
+    disk:
+      name: seachat-data
+      mountPath: /var/data
+      sizeGB: 1
