@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createChatServer } from '../server.mjs';
-import { readFileSync, mkdtempSync, rmSync, copyFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -38,11 +38,11 @@ test('shared messages, validation, rate limiting, reports, deletion and bans', a
 });
 
 test('plugin joins and sends via documented UI bridge; polling ends when tray closes', async () => {
-  const handlers = new Map(), refs = [], calls = [];
+  const handlers = new Map(), refs = [], calls = [], rendered = [];
   let render, onMount, onUnmount, intervals = 0, cancelled = 0;
   const view = {
     render: fn => { render = fn; }, onOpen: fn => { onMount = fn; }, onClose: fn => { onUnmount = fn; },
-    text: text => ({ text }), input: () => ({}), button: () => ({}), div: () => ({})
+    text: text => { rendered.push(text); return { text }; }, input: () => ({}), button: () => ({}), div: () => ({})
   };
   const ctx = {
     fieldRef: value => { const ref = { current: value, setValue(v) { this.current = v; } }; refs.push(ref); return ref; },
@@ -52,7 +52,9 @@ test('plugin joins and sends via documented UI bridge; polling ends when tray cl
     setInterval: () => { intervals++; return () => { cancelled++; }; },
     fetch: async (url, opts) => {
       calls.push({ url, opts });
-      return { ok: true, json: () => url.endsWith('/sessions') ? { token: 'session' } : { messages: [{ id: 1, name: 'Alice', text: '<b>hello</b>', createdAt: 'now' }] } };
+      return { ok: true, json: () => url.endsWith('/sessions') ? { token: 'session' }
+        : url.includes('?revision=') ? { unchanged: true, revision: 'v1' }
+        : { revision: 'v1', messages: [{ id: 1, name: 'Alice', text: '<b>hello</b>', createdAt: 'now' }] } };
     }
   };
   const sandbox = { $ui: { register: fn => fn(ctx) } };
@@ -64,7 +66,11 @@ test('plugin joins and sends via documented UI bridge; polling ends when tray cl
   await handlers.get('global-chat-send')();
   assert.equal(refs[1].current, '');
   assert.equal(calls.find(c => c.opts.method === 'POST' && c.url.endsWith('/messages')).opts.headers.Authorization, 'Bearer session');
-  render(); onUnmount(); assert.equal(cancelled, 1);
+  rendered.length = 0;
+  render();
+  assert.ok(calls.some(call => call.url.endsWith('/messages?revision=v1')));
+  assert.ok(rendered.some(text => text.includes('<b>hello</b>')), 'quiet polls preserve history as plain text');
+  onUnmount(); assert.equal(cancelled, 1);
 });
 
 test('history and credentials survive a server restart', async t => {
@@ -106,4 +112,8 @@ test('manifest builds restrict network access and retain the chosen public endpo
   assert.ok(manifest.payload.includes('https://chat.example.com'));
   build();
   assert.equal(readFileSync(join(dir, 'Manifest.json'), 'utf8'), first);
+  const source = readFileSync(join(dir, 'plugin.js'), 'utf8').replace(/\r\n/g, '\n');
+  writeFileSync(join(dir, 'plugin.js'), source.replace(/\n/g, '\r\n'));
+  build();
+  assert.equal(readFileSync(join(dir, 'Manifest.json'), 'utf8'), first, 'Windows and Linux produce identical embedded payloads');
 });

@@ -1,8 +1,23 @@
 {
   "name": "seachat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24" },
-  "scripts": { "start": "node server.mjs", "test": "node --test test/*.test.mjs", "build": "node build.mjs" }
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "build": "node build.mjs",
+    "worker:dev": "wrangler dev --port 8787",
+    "worker:check": "wrangler deploy --dry-run",
+    "worker:deploy": "wrangler deploy",
+    "db:local": "wrangler d1 migrations apply seachat --local",
+    "db:remote": "wrangler d1 migrations apply seachat --remote"
+  },
+  "devDependencies": {
+    "miniflare": "5.20261006.1-alpha",
+    "wrangler": "4.149.0"
+  }
 }

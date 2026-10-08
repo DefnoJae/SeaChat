@@ -5,3 +5,7 @@ data/
 *.sqlite-wal
 .env
 dist/
+.wrangler/
+.dev.vars
+.dev.vars.*
+wrangler.local.json
