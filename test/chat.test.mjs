@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createChatServer } from '../server.mjs';
-import { readFileSync, mkdtempSync, rmSync, copyFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -112,4 +112,8 @@ test('manifest builds restrict network access and retain the chosen public endpo
   assert.ok(manifest.payload.includes('https://chat.example.com'));
   build();
   assert.equal(readFileSync(join(dir, 'Manifest.json'), 'utf8'), first);
+  const source = readFileSync(join(dir, 'plugin.js'), 'utf8').replace(/\r\n/g, '\n');
+  writeFileSync(join(dir, 'plugin.js'), source.replace(/\n/g, '\r\n'));
+  build();
+  assert.equal(readFileSync(join(dir, 'Manifest.json'), 'utf8'), first, 'Windows and Linux produce identical embedded payloads');
 });
