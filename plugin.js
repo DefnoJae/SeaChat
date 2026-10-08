@@ -10,6 +10,7 @@ function init() {
     const joined = ctx.state(false);
     const busy = ctx.state(false);
     let token = "";
+    let revision = "";
     let polling = false;
     let mounted = false;
     let cancelPoll = null;
@@ -32,9 +33,10 @@ function init() {
       if (!token || polling) return;
       polling = true;
       try {
-        const result = await request("/messages");
-        messages.set(result.messages);
-        status.set("Connected · Public room · Refreshes every 3 seconds");
+        const result = await request("/messages" + (revision ? "?revision=" + encodeURIComponent(revision) : ""));
+        if (result.messages) messages.set(result.messages);
+        revision = result.revision || "";
+        status.set("Connected · Public room · Refreshes every 10 seconds");
       } catch (e) { status.set(String(e.message || e)); }
       finally { polling = false; }
     }
@@ -44,9 +46,10 @@ function init() {
       try {
         const result = await request("/sessions", "POST", { name: name.current });
         token = result.token;
+        revision = "";
         joined.set(true);
         await refresh();
-        if (mounted && !cancelPoll) cancelPoll = ctx.setInterval(refresh, 3000);
+        if (mounted && !cancelPoll) cancelPoll = ctx.setInterval(refresh, 10000);
       } catch (e) { status.set(String(e.message || e)); }
       finally { busy.set(false); }
     });
@@ -72,7 +75,7 @@ function init() {
     view.onOpen(() => {
       mounted = true;
       refresh();
-      if (token && !cancelPoll) cancelPoll = ctx.setInterval(refresh, 3000);
+      if (token && !cancelPoll) cancelPoll = ctx.setInterval(refresh, 10000);
     });
     view.onClose(() => { mounted = false; if (cancelPoll) cancelPoll(); cancelPoll = null; });
     view.render(() => {
