@@ -93,3 +93,7 @@ Stay on Workers Free. Current allowances include 100,000 requests/day and D1's 5
 Quota exhaustion can cause errors until limits reset. This project does not switch your subscription to paid. If your account is already on Workers Paid, usage beyond included amounts can incur charges: confirm your account's plan before deploying.
 
 Official references: [Workers limits](https://developers.cloudflare.com/workers/platform/limits/), [D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/), [D1 commands](https://developers.cloudflare.com/d1/wrangler-commands/), and [workers.dev](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/).
+
+## v0.6.0 rollout
+
+Apply additive migration `0005_media.sql` before deploying v0.6.0. It adds a nullable attachment column and preserves existing messages. Keep `MEDIA_ENABLED` unset until free KLIPY production access is confirmed and the client config is enabled; badge/navigation work independently. Closed clients make one lightweight request every 30 seconds (about 2,880/day per continuously running session), with backoff on failures. GIF/sticker bytes load directly from KLIPY and never use Worker media storage or bandwidth.

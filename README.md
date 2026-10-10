@@ -8,7 +8,7 @@ One public chat room for everyone who installs this Seanime extension. A purple 
 
 ## Install SeaChat
 
-Download `Manifest.json` from this repository, save it as `seachat.json` in Seanime's data directory `extensions` folder, reload Seanime, and enable SeaChat. Grant network permission for `seachat.seachat-defnojae.workers.dev` and the storage permission that remembers your session. Click the purple tray icon and choose a display name. Everyone using this public build joins the same room. Version 0.5.0 uses Seanime's Webview API, available since v3.3.0.
+Download `Manifest.json` from this repository, save it as `seachat.json` in Seanime's data directory `extensions` folder, reload Seanime, and enable SeaChat. Grant network permission for `seachat.seachat-defnojae.workers.dev` and the storage permission that remembers your session. Click the purple tray icon and choose a display name. Everyone using this public build joins the same room. Version 0.6.0 uses Seanime's Webview API, available since v3.3.0.
 
 The backend uses Cloudflare Workers and D1 without purchasing a domain or upgrading a subscription. Free-tier quotas apply. See [FREE_HOSTING.md](FREE_HOSTING.md) to deploy your own room.
 
@@ -54,13 +54,13 @@ The checked-in manifest connects to the public room. For local testing, run `nod
 
 Cloudflare currently includes 100,000 Worker requests per day, 5 million D1 rows read per day, 100,000 rows written per day, and 5 GB of total D1 storage on the Free plan. Limits are shared with other applications in your account. CPU and per-database limits also apply.
 
-At a ten-second polling interval, one continuously open chat uses about 17,280 requests per day for history and reply notices, before joins, sends, reports and avatar loads. Reading older context adds another request per poll. This means the free setup suits a small community, not unlimited simultaneous users. Quiet polls avoid loading the full history, but active conversations use more database reads. Requests stop succeeding when a quota is reached; this setup does not upgrade your account automatically.
+At a ten-second polling interval, one continuously open chat uses about 17,280 requests per day for history and reply notices, before joins, sends, reports and avatar loads. A closed chat now checks activity every 30 seconds while Seanime is running, adding about 2,880 requests per continuously running session per day; no avatars or full history are fetched while closed. Reaching latest adds an acknowledgment refresh. Reading older context adds another request per poll. This means the free setup suits a small community, not unlimited simultaneous users. Quiet polls avoid loading the full history, but active conversations use more database reads. Requests stop succeeding when a quota is reached; this setup does not upgrade your account automatically.
 
 Sources: [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) and [D1 pricing and Free-plan behavior](https://developers.cloudflare.com/d1/platform/pricing/).
 
 ## Prototype limits
 
-Display names are unverified and can be duplicated. A ban blocks a session; a person can create another session. AniList verification, presence, general message attachments, and a moderation dashboard are not included. Uninstalling the extension clears its saved session; profiles cannot currently be recovered on another computer without that session.
+Display names are unverified and can be duplicated. A ban blocks a session; a person can create another session. AniList verification, presence, arbitrary file uploads, and a moderation dashboard are not included. Uninstalling the extension clears its saved session; profiles cannot currently be recovered on another computer without that session.
 
 Profiles belong to session IDs, not display names. Editing your current profile changes messages from that session; earlier messages posted from a different session keep their own profiles even when their names look similar. Reply notices also belong to the current session and are checked only while chat is open. Replies outside the 1,000-message retention window cannot be recovered.
 
@@ -97,7 +97,7 @@ Authenticated API additions: `POST /messages` accepts optional `replyToId`; hist
 
 `build.mjs` embeds the plugin in `Manifest.json` and `dist/seachat.json`. Pass your HTTPS origin to save it in `chat.config.json`; later builds reuse it. The manifest points to this repository for updates. Do not overwrite a public manifest with a local test build.
 
-Tests cover shared history, authentication, profile validation and sharing, report details, moderation, Node persistence, the Webview bridge, manifest generation, and the real local Cloudflare runtime including simultaneous sends, rate limits, revision polling, deletion visibility, and retention. CI validates the Worker bundle and checks for manifest drift. Browser checks also exercise the UI in a sandbox with Seanime's `allow-scripts allow-forms` configuration. Final interaction inside the user's installed Seanime remains a user check.
+Tests cover shared history, authentication, profile validation and sharing, report details, moderation, Node persistence, the Webview bridge, manifest generation, and the real local Cloudflare runtime including simultaneous sends, rate limits, revision polling, deletion visibility, and retention. CI validates the Worker bundle and checks for manifest drift. Browser checks also exercise the UI in a sandbox with Seanime's `allow-scripts allow-forms` configuration. The v0.6.0 sandbox checks cover unread navigation and the media picker. Installed Seanime checks confirmed the native tray badge and jump-to-present clearing behavior; provider activation additionally requires a real production key and client-network validation.
 
 References: [Seanime plugin guide](https://seanime.gitbook.io/seanime-extensions/plugins/write-test-share), [permissions](https://seanime.gitbook.io/seanime-extensions/plugins/permissions), and [Cloudflare rate limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/).
 
@@ -108,3 +108,15 @@ The three-dot menu offers Edit and Delete for messages owned by your current ses
 Reports store the selected message ID, reporter session, timestamp, reason and optional details for moderator review. Repeat reports from the same session for the same message are deduplicated. Reporting does not automatically hide messages, delete messages or ban senders. The authenticated admin API lists reports and permits message deletion or session bans; no moderation inbox, push alert or email alert is currently implemented.
 
 Authenticated `PATCH /messages/<id>` accepts `{text}` and `DELETE /messages/<id>` permanently removes a retained message. Both enforce ownership on the server and apply write rate limits. No edit history is kept.
+
+## v0.6.0 unread messages and media
+
+The tray badge counts retained unread messages from other sessions. Opening chat does not clear it: reaching the latest message does. The read cursor persists per server and session. First-time sessions start at the top of the loaded history without counting old messages as new; returning sessions start at the first retained unread message. The down-arrow button jumps to present. Reply notices remain independent. Closed-chat polling backs off on failures and stops when the extension unloads.
+
+Authenticated `GET /activity?after=<messageId>` returns `latestId`, `unreadCount`, and nullable `oldestUnreadId`. The latest ID is a durable insertion high-water mark, so it does not decrease when messages are deleted. `GET /messages?after=<messageId>` includes the same activity snapshot, including unchanged-revision responses.
+
+GIFs and stickers are implemented but disabled in this public release pending confirmed free KLIPY production access. Configure `media-config.json` with the client app key, `productionFreeConfirmed: true`, and `enabled: true`; set backend `MEDIA_ENABLED=true`, rebuild, and verify actual client requests before activation. Never use the admin token as the media app key. The client app key is visible to users. Ads must be disabled in the KLIPY Partner Panel. The picker uses `content_filter=off`, trending/search, and one removable attachment preview with optional caption/reply.
+
+`POST /messages` accepts optional `attachment`: `{provider:"klipy",kind:"gif"|"sticker",id,title,url,previewUrl,width,height}`. Text or media is required. Delivery URLs are preserved exactly and restricted to HTTPS raster formats on `static.klipy.com`, `static1.klipy.com`, and `static2.klipy.com`. No media bytes are stored, proxied or cached. History/context include optional `attachment` and `caption`; older clients receive descriptive text for attachment-only messages. Editing changes captions, not attachments; deleting removes both. Quoted replies retain no deleted original content. Admin report listings include attachment metadata.
+
+Before enabling publicly: confirm free production terms, ads disabled, provider attribution, and [KLIPY integration requirements](https://docs.klipy.com/integration-requirements.md). Requests and media delivery originate from the user's client. Search results keep provider ordering, and credentials are not sent to KLIPY. In this release no custom uploads, favorites or multiple attachments are supported.

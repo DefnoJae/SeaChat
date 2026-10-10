@@ -1,5 +1,6 @@
 import { COLORS, validateProfile, validateReport } from '../profile.mjs';
-import { MESSAGE_SELECT, messageRows, messageId, afterId } from '../messages.mjs';
+import { MESSAGE_SELECT, ACTIVITY_SELECT, messageRows, messageId, afterId } from '../messages.mjs';
+import { messageContent } from '../media.mjs';
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const reply = (status, value) => Response.json(value, {
   status,
@@ -51,7 +52,7 @@ export default {
       if (url.pathname.startsWith('/admin/')) {
         if (!env.ADMIN_TOKEN || !crypto.subtle.timingSafeEqual(new TextEncoder().encode(credentialHash), new TextEncoder().encode(await hash(env.ADMIN_TOKEN)))) fail(401, 'Admin authentication required.');
         if (request.method === 'GET' && url.pathname === '/admin/reports') {
-          const result = await statement(`SELECT r.message_id, m.user_id, m.name, m.text, COUNT(*) AS report_count,
+          const result = await statement(`SELECT r.message_id, m.user_id, m.name, m.text, m.attachment, COUNT(*) AS report_count,
             json_group_array(json_object('reason',r.reason,'details',r.details)) AS reports
             FROM reports r JOIN messages m ON r.message_id=m.id GROUP BY r.message_id LIMIT 100`).all();
           return reply(200, result.results);
@@ -86,14 +87,14 @@ export default {
       if (user.banned) fail(403, 'This account has been banned.');
       if (['PATCH', 'DELETE'].includes(request.method) && /^\/messages\/\d+$/.test(url.pathname)) {
         const id = messageId(Number(url.pathname.split('/').pop()));
-        const message = await statement('SELECT user_id FROM messages WHERE id=?', id).first();
+        const message = await statement('SELECT user_id,attachment FROM messages WHERE id=?', id).first();
         if (!message) fail(404, 'Message is no longer available.');
         if (message.user_id !== user.id) fail(403, 'You can only change your own messages.');
         await limit(env.WRITE_LIMIT, 'message-change:' + user.id);
         if (request.method === 'PATCH') {
           const data = await readBody(request);
           const text = typeof data.text === 'string' ? data.text.trim() : '';
-          if (!text || text.length > 1000 || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)) fail(400, 'Messages must contain 1–1000 characters.');
+          if ((!text && !message.attachment) || text.length > 1000 || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)) fail(400, 'Messages must contain 1–1000 characters.');
           const result = await statement('UPDATE messages SET text=? WHERE id=? AND user_id=? RETURNING id', text, id, user.id).first();
           if (!result) fail(404, 'Message is no longer available.');
         } else {
@@ -101,6 +102,10 @@ export default {
           if (!result) fail(404, 'Message is no longer available.');
         }
         return reply(200, { ok: true });
+      }
+      if (request.method === 'GET' && url.pathname === '/activity') {
+        const activity = await statement(ACTIVITY_SELECT, afterId(url.searchParams.get('after')), user.id).first();
+        return reply(200, activity);
       }
       if (request.method === 'GET' && url.pathname === '/replies') {
         const result = await statement('SELECT id,created_at AS createdAt FROM messages WHERE reply_to_user_id=? AND user_id<>? AND id>? ORDER BY id LIMIT 1000', user.id, user.id, afterId(url.searchParams.get('after'))).all();
@@ -130,36 +135,32 @@ export default {
         return reply(200, { avatar: profile.avatar, avatarVersion: profile.avatar_version });
       }
       if (request.method === 'GET' && url.pathname === '/messages') {
-        const current = await statement('SELECT revision FROM room WHERE id=1').first();
-        if (url.searchParams.get('revision') === current.revision) return reply(200, { unchanged: true, revision: current.revision });
-        // A transactional batch makes the revision and history a consistent snapshot.
-        const results = await env.DB.batch([
-          statement('SELECT revision FROM room WHERE id=1'),
-          statement(MESSAGE_SELECT + ' ORDER BY m.id DESC LIMIT 100')
-        ]);
-        return reply(200, { revision: results[0].results[0].revision, messages: messageRows(results[1].results.reverse()) });
+        const after = afterId(url.searchParams.get('after'));
+        const summary = await env.DB.batch([statement('SELECT revision FROM room WHERE id=1'), statement(ACTIVITY_SELECT, after, user.id)]);
+        if (url.searchParams.get('revision') === summary[0].results[0].revision) return reply(200, { unchanged: true, revision: summary[0].results[0].revision, activity: summary[1].results[0] });
+        const results = await env.DB.batch([statement('SELECT revision FROM room WHERE id=1'), statement(MESSAGE_SELECT + ' ORDER BY m.id DESC LIMIT 100'), statement(ACTIVITY_SELECT, after, user.id)]);
+        return reply(200, { revision: results[0].results[0].revision, messages: messageRows(results[1].results.reverse()), activity: results[2].results[0] });
       }
       if (request.method === 'POST' && url.pathname === '/messages') {
         const data = await readBody(request);
-        const text = typeof data.text === 'string' ? data.text.trim() : '';
-        if (!text || text.length > 1000 || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)) fail(400, 'Messages must contain 1–1000 characters.');
+        const { text, attachment } = messageContent(data, env.MEDIA_ENABLED === 'true');
         const replyToId = messageId(data.replyToId, true);
         if (replyToId !== null && !await statement('SELECT id FROM messages WHERE id=?', replyToId).first()) fail(404, 'Original message is no longer available.');
         await limit(env.WRITE_LIMIT, 'send:' + ip);
         const now = Date.now(), requestId = crypto.randomUUID(), createdAt = new Date(now).toISOString();
         // D1 batches are transactions: simultaneous sends cannot bypass the two-second limit.
         const results = await env.DB.batch([
-          statement(`INSERT INTO messages(request_id,user_id,name,text,created_at,reply_to_id,reply_to_user_id)
-            SELECT ?,id,name,?,?,?,(SELECT user_id FROM messages WHERE id=?) FROM users
+          statement(`INSERT INTO messages(request_id,user_id,name,text,created_at,reply_to_id,reply_to_user_id,attachment)
+            SELECT ?,id,name,?,?,?,(SELECT user_id FROM messages WHERE id=?),? FROM users
             WHERE id=? AND banned=0 AND last_sent_at<=? AND (? IS NULL OR EXISTS(SELECT 1 FROM messages WHERE id=?)) RETURNING id`,
-            requestId, text, createdAt, replyToId, replyToId, user.id, now - 2000, replyToId, replyToId),
+            requestId, text, createdAt, replyToId, replyToId, attachment ? JSON.stringify(attachment) : null, user.id, now - 2000, replyToId, replyToId),
           statement(`UPDATE users SET last_sent_at=? WHERE id=? AND EXISTS (SELECT 1 FROM messages WHERE request_id=?)`, now, user.id, requestId)
         ]);
         if (!results[0].results.length) {
           if (replyToId !== null && !await statement('SELECT id FROM messages WHERE id=?', replyToId).first()) fail(404, 'Original message is no longer available.');
           fail(429, 'Wait two seconds before sending again.');
         }
-        return reply(201, { id: results[0].results[0].id, userId: user.id, name: user.name, text, createdAt });
+        return reply(201, { id: results[0].results[0].id, userId: user.id, name: user.name, text, attachment, createdAt });
       }
       if (request.method === 'POST' && /^\/messages\/\d+\/report$/.test(url.pathname)) {
         await limit(env.WRITE_LIMIT, 'report:' + user.id);

@@ -11,7 +11,8 @@ test('Cloudflare runtime: shared D1 history, quiet polls, moderation, races, ret
     modules: [
       { type: 'ESModule', path: fileURLToPath(new URL('../cloudflare/worker.mjs', import.meta.url)) },
       { type: 'ESModule', path: fileURLToPath(new URL('../profile.mjs', import.meta.url)) },
-      { type: 'ESModule', path: fileURLToPath(new URL('../messages.mjs', import.meta.url)) }
+      { type: 'ESModule', path: fileURLToPath(new URL('../messages.mjs', import.meta.url)) },
+      { type: 'ESModule', path: fileURLToPath(new URL('../media.mjs', import.meta.url)) }
     ],
     compatibilityDate: config.compatibility_date,
     d1Databases: { DB: 'seachat-test' },
@@ -29,6 +30,7 @@ test('Cloudflare runtime: shared D1 history, quiet polls, moderation, races, ret
   const replies = readFileSync(new URL('../cloudflare/migrations/0003_replies.sql', import.meta.url), 'utf8');
   await db.batch(replies.split(';').map(sql => sql.trim()).filter(Boolean).map(sql => db.prepare(sql)));
   await db.prepare(readFileSync(new URL('../cloudflare/migrations/0004_message_edits.sql', import.meta.url), 'utf8')).run();
+  await db.prepare(readFileSync(new URL('../cloudflare/migrations/0005_media.sql', import.meta.url), 'utf8')).run();
   async function call(path, method = 'GET', token = '', data, ip = '192.0.2.1') {
     const response = await mf.dispatchFetch('https://seachat.example.com' + path, {
       method, headers: { Authorization: 'Bearer ' + token, 'CF-Connecting-IP': ip },

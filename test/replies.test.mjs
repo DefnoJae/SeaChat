@@ -21,13 +21,13 @@ for (const platform of ['Node', 'Cloudflare']) test(platform + ': replies, recip
   } else {
     const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
     const mf = new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'replies',
-      modules: ['cloudflare/worker.mjs', 'profile.mjs', 'messages.mjs'].map(file => ({ type: 'ESModule', path: fileURLToPath(new URL('../' + file, import.meta.url)) })),
+      modules: ['cloudflare/worker.mjs', 'profile.mjs', 'messages.mjs', 'media.mjs'].map(file => ({ type: 'ESModule', path: fileURLToPath(new URL('../' + file, import.meta.url)) })),
       compatibilityDate: config.compatibility_date, d1Databases: { DB: 'replies' }, bindings: { ADMIN_TOKEN: 'admin' },
       ratelimits: Object.fromEntries(config.ratelimits.map(({ name, ...binding }) => [name, binding]))
     }] }));
     t.after(() => mf.dispose());
     const db = await mf.getD1Database('DB');
-    for (const name of ['0001_chat.sql', '0002_profiles.sql', '0003_replies.sql', '0004_message_edits.sql']) {
+    for (const name of ['0001_chat.sql', '0002_profiles.sql', '0003_replies.sql', '0004_message_edits.sql', '0005_media.sql']) {
       const sql = readFileSync(new URL('../cloudflare/migrations/' + name, import.meta.url), 'utf8');
       const statements = sql.split(/;\s*(?=CREATE|INSERT|PRAGMA|ALTER|UPDATE|$)/).filter(s => s.trim());
       await db.batch(statements.map(s => db.prepare(s)));

@@ -5,12 +5,34 @@ function init() {
     let token = $storage.get("sessionToken") || "";
     let revision = "", mounted = false, pollPending = false, busy = false, cancelPoll = null;
     let queue = Promise.resolve(), latestMessages = [], replyCursor = 0, cursorKey = "";
+    let readCursor = 0, readKey = "", firstVisit = false, identityReady = false, nextClosedPoll = 0, failures = 0;
     const avatars = new Map();
-    const state = ctx.state({ joined: false, busy: false, connected: false, profile: null, messages: [], unreadReplies: [], contextId: null, jumpId: null, jumpSequence: 0, status: "", notice: "", noticeId: 0, success: "", successId: 0 });
+    const state = ctx.state({ joined: false, visible: false, busy: false, connected: false, profile: null, messages: [], unreadReplies: [], activity: null, openSequence: 0, initialTarget: null, contextId: null, jumpId: null, jumpSequence: 0, status: "", notice: "", noticeId: 0, success: "", successId: 0 });
     function update(values) { state.set(Object.assign({}, state.get(), values)); }
     function serial(fn) { const result = queue.then(fn); queue = result.catch(() => {}); return result; }
     const panel = ctx.newWebview({ slot: "fixed", width: "460px", maxWidth: "max(1px, calc(100vw - 100px))", height: "min(640px, calc(100vh - 32px))", maxHeight: "calc(100vh - 32px)", style: "left:84px;top:50%;transform:translateY(-50%)", hidden: true, zIndex: 100, window: { draggable: false, frameless: true } });
     const tray = ctx.newTray({ tooltipText: "SeaChat", withContent: false, iconUrl: "https://raw.githubusercontent.com/DefnoJae/SeaChat/main/assets/icon.png" });
+    function setActivity(activity) {
+      if (!activity) return;
+      update({ activity });
+      tray.updateBadge({ number: activity.unreadCount || 0, intent: "info" });
+    }
+    async function prepareIdentity() {
+      const profile = await request("/profile");
+      readKey = "messageRead:" + base + ":" + profile.userId;
+      cursorKey = "replyRead:" + base + ":" + profile.userId;
+      const saved = $storage.get(readKey), savedReply = $storage.get(cursorKey);
+      firstVisit = !Number.isSafeInteger(saved) || saved < 0;
+      readCursor = firstVisit ? 0 : saved;
+      replyCursor = Number.isSafeInteger(savedReply) && savedReply >= 0 ? savedReply : 0;
+      if (firstVisit) {
+        const activity = await request("/activity?after=0");
+        readCursor = activity.latestId; $storage.set(readKey, readCursor);
+      }
+      identityReady = true;
+      if (profile.avatarVersion) avatars.set(profile.userId + ":" + profile.avatarVersion, profile.avatar);
+      update({ joined: true, profile });
+    }
     panel.channel.sync("chat", state);
     panel.setContent(() => content);
     async function request(path, method, data) {
@@ -38,9 +60,11 @@ function init() {
     async function refreshNow() {
       if (!token) return;
       try {
-        const result = await request("/messages" + (revision ? "?revision=" + encodeURIComponent(revision) : ""));
+        const result = await request("/messages?after=" + readCursor + (revision ? "&revision=" + encodeURIComponent(revision) : ""));
         if (result.messages) latestMessages = result.messages;
         revision = result.revision || "";
+        setActivity(result.activity);
+        if (!mounted) return;
         let visible = latestMessages;
         const contextId = state.get().contextId;
         if (contextId !== null) {
@@ -48,9 +72,12 @@ function init() {
           catch (e) { if (e.status !== 404) throw e; update({ contextId: null }); notice(e); }
         }
         // Hydrate on quiet polls too, allowing failed avatar requests to recover.
-        update({ messages: await hydrate(visible), connected: true, status: "" });
+        const hydrated = await hydrate(visible);
+        if (!mounted) return;
+        update({ messages: hydrated, connected: true, status: "" });
         const replies = await request("/replies?after=" + replyCursor);
-        update({ unreadReplies: replies.replies });
+        if (mounted) update({ unreadReplies: replies.replies });
+        failures = 0;
       } catch (e) { update({ connected: false, status: String(e.message || e) }); }
     }
     function refresh() {
@@ -61,14 +88,35 @@ function init() {
     async function resumeNow() {
       if (!token || !mounted) return;
       try {
-        const profile = await request("/profile");
-        cursorKey = "replyRead:" + base + ":" + profile.userId;
-        const saved = $storage.get(cursorKey);
-        replyCursor = Number.isSafeInteger(saved) && saved >= 0 ? saved : 0;
-        if (profile.avatarVersion) avatars.set(profile.userId + ":" + profile.avatarVersion, profile.avatar);
-        update({ joined: true, profile }); await refreshNow();
+        if (!identityReady) await prepareIdentity();
+        update({ contextId: null }); await refreshNow();
+        if (!mounted) return;
+        const target = firstVisit ? -1 : state.get().activity?.oldestUnreadId || null;
+        if (target && target > 0 && !latestMessages.some(m => m.id === target)) {
+          try { const result = await request("/messages/context/" + target); update({ messages: await hydrate(result.messages), contextId: target }); }
+          catch (e) { if (e.status !== 404) throw e; }
+        }
+        firstVisit = false;
+        update({ visible: true, initialTarget: target, openSequence: state.get().openSequence + 1 });
       } catch (e) { if (e.status === 401) { token = ""; $storage.remove("sessionToken"); update({ joined: false, profile: null }); } notice(e); }
-      if (mounted && token && !cancelPoll) cancelPoll = ctx.setInterval(refresh, 10000);
+      startPolling();
+    }
+    function startPolling() {
+      if (!token || cancelPoll) return;
+      cancelPoll = ctx.setInterval(() => {
+        if (mounted) return refresh();
+        if (pollPending || Date.now() < nextClosedPoll) return;
+        pollPending = true;
+        return serial(async () => {
+          try {
+            if (!identityReady) await prepareIdentity();
+            setActivity(await request("/activity?after=" + readCursor)); failures = 0;
+          } catch (e) {
+            failures++;
+            if (e.status === 401 || e.status === 403) { token = ""; identityReady = false; tray.updateBadge({ number: 0 }); if (cancelPoll) cancelPoll(); cancelPoll = null; }
+          } finally { nextClosedPoll = Date.now() + Math.min(300000, 30000 * Math.pow(2, failures)); }
+        }).finally(() => { pollPending = false; });
+      }, 10000);
     }
     function action(kind, fn) {
       if (busy) return;
@@ -81,10 +129,10 @@ function init() {
     }
     panel.channel.on("join", data => action("join", async () => {
       const result = await request("/sessions", "POST", { name: data.name });
-      token = result.token; $storage.set("sessionToken", token); revision = ""; latestMessages = []; await resumeNow();
+      token = result.token; identityReady = false; $storage.set("sessionToken", token); revision = ""; latestMessages = []; await resumeNow();
     }));
     panel.channel.on("send", data => action("send", async () => {
-      await request("/messages", "POST", { text: data.text, replyToId: data.replyToId == null ? null : data.replyToId });
+      await request("/messages", "POST", { text: data.text, attachment: data.attachment || null, replyToId: data.replyToId == null ? null : data.replyToId });
       update({ contextId: null }); await refreshNow();
     }));
     panel.channel.on("profile", data => action("profile", async () => {
@@ -127,11 +175,18 @@ function init() {
       $storage.set(cursorKey, replyCursor); update({ unreadReplies: [] });
     });
     panel.channel.on("latest", () => action("latest", async () => { update({ contextId: null }); await refreshNow(); update({ jumpId: null, jumpSequence: state.get().jumpSequence + 1 }); }));
-    function close() { mounted = false; if (cancelPoll) cancelPoll(); cancelPoll = null; panel.hide(); }
+    panel.channel.on("readMessages", data => serial(async () => {
+      const max = latestMessages.length ? latestMessages[latestMessages.length - 1].id : 0;
+      if (!mounted || state.get().contextId !== null || !readKey || !Number.isSafeInteger(data.messageId) || data.messageId <= readCursor || data.messageId > max) return;
+      readCursor = data.messageId; $storage.set(readKey, readCursor);
+      setActivity(await request("/activity?after=" + readCursor));
+    }).catch(notice));
+    function close() { mounted = false; update({ visible: false }); panel.hide(); nextClosedPoll = Date.now(); }
     panel.channel.on("close", close);
     tray.onClick(() => { if (mounted) close(); else { mounted = true; panel.show(); serial(resumeNow); } });
-    panel.onMount(() => { if (mounted) serial(resumeNow); });
+    panel.onMount(() => { if (mounted) serial(() => { if (!state.get().visible) return resumeNow(); }); else startPolling(); });
     panel.onUnmount(() => { mounted = false; if (cancelPoll) cancelPoll(); cancelPoll = null; });
     panel.channel.on("ready", () => update({}));
+    startPolling();
   });
 }

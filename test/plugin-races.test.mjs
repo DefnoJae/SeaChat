@@ -11,22 +11,23 @@ test('profile saves serialize with polls; avatars retry quietly; reply acknowled
     {id:11,userId:2,name:'Alice',color:'#f472b6',avatarVersion:'v1',text:'different session',createdAt:'now'}];
   const ctx = { state: value => {current=value;return {get:()=>current,set:v=>{current=v;states.push(structuredClone(v));}};},
     newWebview:()=>({channel:{sync:()=>{},on:(key,fn)=>handlers.set(key,fn)},setContent:()=>{},show:()=>{},hide:()=>{},onMount:()=>{},onUnmount:()=>{}}),
-    newTray:()=>({onClick:fn=>{click=fn;}}),setInterval:fn=>{interval=fn;return()=>{};},
+    newTray:()=>({updateBadge:()=>{},onClick:fn=>{click=fn;}}),setInterval:fn=>{interval=fn;return()=>{};},
     fetch:async(url,opts)=>{
       let value,ok=true,status=200;
       if(url.endsWith('/profile')) {
         if(opts.method==='PUT'){puts++;profile={...profile,...JSON.parse(opts.body),avatarVersion:'saved'};}
         value=structuredClone(profile);
       } else if(url.includes('/avatars/')) {avatarAttempts++;ok=avatarAttempts>1;status=ok?200:503;value=ok?{avatar:'data:image/png;base64,abc',avatarVersion:'v1'}:{error:'temporary'};}
+      else if(url.includes('/activity?')) value={latestId:11,unreadCount:0,oldestUnreadId:null};
       else if(url.includes('/replies?')) {const after=Number(new URL(url).searchParams.get('after'));value={replies:[{id:12,createdAt:'now'}].filter(r=>r.id>after)};}
       else if(url.includes('/context/')) value={messages:[{id:12,userId:2,name:'Bob',text:'reply',createdAt:'now',reply:{userId:1}}]};
-      else {value=url.includes('?revision=')?{unchanged:true,revision:'room'}:{messages:history(),revision:'room'};if(hold){hold=false;waiting=true;await new Promise(resolve=>{release=resolve;});}}
+      else {value=url.includes('revision=')?{unchanged:true,revision:'room'}:{messages:history(),revision:'room'};if(hold){hold=false;waiting=true;await new Promise(resolve=>{release=resolve;});}}
       return {ok,status,json:()=>value};
     }
   };
   const sandbox={$ui:{register:fn=>fn(ctx)},$storage:{get:k=>storage.get(k),set:(k,v)=>storage.set(k,v),remove:k=>storage.delete(k)}};
   vm.runInNewContext(readFileSync(new URL('../plugin.js',import.meta.url),'utf8'),sandbox);sandbox.init();click();
-  for(let n=0;n<50&&!interval;n++)await new Promise(resolve=>setImmediate(resolve));
+  for(let n=0;n<50&&!current.visible;n++)await new Promise(resolve=>setImmediate(resolve));
   assert.equal(current.messages[1].avatar,'');assert.equal(avatarAttempts,1);
   await interval();assert.equal(avatarAttempts,2);assert.equal(current.messages[1].avatar,'data:image/png;base64,abc');
   hold=true;const poll=interval();for(let n=0;n<50&&!waiting;n++)await new Promise(resolve=>setImmediate(resolve));

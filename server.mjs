@@ -5,9 +5,11 @@ import { pathToFileURL } from 'node:url';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { COLORS, validateProfile, validateReport } from './profile.mjs';
-import { MESSAGE_SELECT, messageRows, messageId, afterId } from './messages.mjs';
+import { MESSAGE_SELECT, ACTIVITY_SELECT, messageRows, messageId, afterId } from './messages.mjs';
 
-export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = process.env.ADMIN_TOKEN || '' } = {}) {
+import { messageContent } from './media.mjs';
+
+export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = process.env.ADMIN_TOKEN || '', mediaEnabled = process.env.MEDIA_ENABLED === 'true' } = {}) {
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
   const db = new DatabaseSync(dbPath);
   db.exec(`PRAGMA journal_mode=WAL;
@@ -17,7 +19,7 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
   for (const [table, column, definition] of [
     ['users','color',"TEXT NOT NULL DEFAULT '#a78bfa'"], ['users','avatar',"TEXT NOT NULL DEFAULT ''"],
     ['users','avatar_version',"TEXT NOT NULL DEFAULT ''"], ['reports','reason',"TEXT NOT NULL DEFAULT 'Other'"], ['reports','details',"TEXT NOT NULL DEFAULT ''"],
-    ['messages','reply_to_id','INTEGER'], ['messages','reply_to_user_id','INTEGER']
+    ['messages','reply_to_id','INTEGER'], ['messages','reply_to_user_id','INTEGER'], ['messages','attachment','TEXT']
   ]) if (!db.prepare('PRAGMA table_info(' + table + ')').all().some(row => row.name === column)) db.exec('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + definition);
   db.exec('CREATE INDEX IF NOT EXISTS messages_by_reply_recipient ON messages(reply_to_user_id,id)');
   const limits = new Map();
@@ -63,7 +65,7 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
         const a = Buffer.from(hash(credential)), b = Buffer.from(hash(adminToken));
         if (!adminToken || !timingSafeEqual(a, b)) fail(401, 'Admin authentication required.');
         if (req.method === 'GET' && url.pathname === '/admin/reports') {
-          return reply(res, 200, db.prepare(`SELECT r.message_id, m.user_id, m.name, m.text, COUNT(*) AS report_count, json_group_array(json_object('reason',r.reason,'details',r.details)) AS reports FROM reports r LEFT JOIN messages m ON r.message_id=m.id GROUP BY r.message_id`).all());
+          return reply(res, 200, db.prepare(`SELECT r.message_id, m.user_id, m.name, m.text, m.attachment, COUNT(*) AS report_count, json_group_array(json_object('reason',r.reason,'details',r.details)) AS reports FROM reports r LEFT JOIN messages m ON r.message_id=m.id GROUP BY r.message_id`).all());
         }
         if (req.method === 'POST' && url.pathname === '/admin/ban') {
           const data = await body(req);
@@ -93,20 +95,24 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
       if (user.banned) fail(403, 'This account has been banned.');
       if (['PATCH', 'DELETE'].includes(req.method) && /^\/messages\/\d+$/.test(url.pathname)) {
         const id = messageId(Number(url.pathname.split('/').pop()));
-        const message = db.prepare('SELECT user_id FROM messages WHERE id=?').get(id);
+        const message = db.prepare('SELECT user_id,attachment FROM messages WHERE id=?').get(id);
         if (!message) fail(404, 'Message is no longer available.');
         if (message.user_id !== user.id) fail(403, 'You can only change your own messages.');
         throttle('message-change:' + user.id, 20, 60_000);
         if (req.method === 'PATCH') {
           const data = await body(req);
           const text = typeof data.text === 'string' ? data.text.trim() : '';
-          if (!text || text.length > 1000 || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)) fail(400, 'Messages must contain 1–1000 characters.');
+          if ((!text && !message.attachment) || text.length > 1000 || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)) fail(400, 'Messages must contain 1–1000 characters.');
           if (!db.prepare('UPDATE messages SET text=? WHERE id=? AND user_id=?').run(text, id, user.id).changes) fail(404, 'Message is no longer available.');
         } else {
           db.prepare('DELETE FROM messages WHERE id=? AND user_id=?').run(id, user.id);
           db.prepare('DELETE FROM reports WHERE message_id=?').run(id);
         }
         return reply(res, 200, { ok: true });
+      }
+      if (req.method === 'GET' && url.pathname === '/activity') {
+        const activity = db.prepare(ACTIVITY_SELECT).get(afterId(url.searchParams.get('after')), user.id);
+        return reply(res, 200, activity);
       }
       if (req.method === 'GET' && url.pathname === '/replies') return reply(res, 200, { replies: db.prepare('SELECT id,created_at AS createdAt FROM messages WHERE reply_to_user_id=? AND user_id<>? AND id>? ORDER BY id LIMIT 1000').all(user.id, user.id, afterId(url.searchParams.get('after'))) });
       if (req.method === 'GET' && /^\/messages\/context\/\d+$/.test(url.pathname)) {
@@ -131,22 +137,22 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
       }
       if (req.method === 'GET' && url.pathname === '/messages') {
         const messages = db.prepare(MESSAGE_SELECT + ' ORDER BY m.id DESC LIMIT 100').all().reverse();
-        return reply(res, 200, { messages: messageRows(messages) });
+        const activity = db.prepare(ACTIVITY_SELECT).get(afterId(url.searchParams.get('after')), user.id);
+        return reply(res, 200, { messages: messageRows(messages), activity });
       }
       if (req.method === 'POST' && url.pathname === '/messages') {
         const data = await body(req);
-        const text = typeof data.text === 'string' ? data.text.trim() : '';
-        if (!text || text.length > 1000 || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)) fail(400, 'Messages must contain 1–1000 characters.');
+        const { text, attachment } = messageContent(data, mediaEnabled);
         const replyToId = messageId(data.replyToId, true);
         const original = replyToId === null ? null : db.prepare('SELECT user_id FROM messages WHERE id=?').get(replyToId);
         if (replyToId !== null && !original) fail(404, 'Original message is no longer available.');
         throttle('send:' + user.id, 1, 2000);
         throttle('sendip:' + ip, 20, 60_000);
         const createdAt = new Date().toISOString();
-        const result = db.prepare('INSERT INTO messages(user_id,name,text,created_at,reply_to_id,reply_to_user_id) VALUES(?,?,?,?,?,?)').run(user.id, user.name, text, createdAt, replyToId, original?.user_id ?? null);
+        const result = db.prepare('INSERT INTO messages(user_id,name,text,created_at,reply_to_id,reply_to_user_id,attachment) VALUES(?,?,?,?,?,?,?)').run(user.id, user.name, text, createdAt, replyToId, original?.user_id ?? null, attachment ? JSON.stringify(attachment) : null);
         db.prepare('DELETE FROM messages WHERE id NOT IN (SELECT id FROM messages ORDER BY id DESC LIMIT 1000)').run();
         db.prepare('DELETE FROM reports WHERE message_id NOT IN (SELECT id FROM messages)').run();
-        return reply(res, 201, { id: Number(result.lastInsertRowid), userId: user.id, name: user.name, text, createdAt });
+        return reply(res, 201, { id: Number(result.lastInsertRowid), userId: user.id, name: user.name, text, attachment, createdAt });
       }
       if (req.method === 'POST' && /^\/messages\/\d+\/report$/.test(url.pathname)) {
         throttle('report:' + user.id, 10, 60_000);

@@ -68,7 +68,7 @@ test('history and credentials survive a server restart', async t => {
 test('manifest builds restrict network access and retain the chosen public endpoint', t => {
   const dir = mkdtempSync(join(tmpdir(), 'seachat-build-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  for (const file of ['build.mjs', 'plugin.js', 'chat.html', 'chat.config.json']) copyFileSync(new URL('../' + file, import.meta.url), join(dir, file));
+  for (const file of ['build.mjs', 'plugin.js', 'chat.html', 'media-config.json', 'chat.config.json']) copyFileSync(new URL('../' + file, import.meta.url), join(dir, file));
   const build = (...args) => execFileSync(process.execPath, [join(dir, 'build.mjs'), ...args], { encoding: 'utf8', stdio: 'pipe' });
   assert.throws(() => build('http://public.example.com'));
   assert.throws(() => build('https://secret:password@chat.example.com'));
