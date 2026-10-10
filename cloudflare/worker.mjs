@@ -47,7 +47,7 @@ export default {
       const credentialHash = await hash(credential);
       const statement = (sql, ...values) => env.DB.prepare(sql).bind(...values);
       if (url.pathname.startsWith('/admin/')) {
-        if (!env.ADMIN_TOKEN || credentialHash !== await hash(env.ADMIN_TOKEN)) fail(401, 'Admin authentication required.');
+        if (!env.ADMIN_TOKEN || !crypto.subtle.timingSafeEqual(new TextEncoder().encode(credentialHash), new TextEncoder().encode(await hash(env.ADMIN_TOKEN)))) fail(401, 'Admin authentication required.');
         if (request.method === 'GET' && url.pathname === '/admin/reports') {
           const result = await statement(`SELECT r.message_id, m.user_id, m.name, m.text, COUNT(*) AS report_count
             FROM reports r JOIN messages m ON r.message_id=m.id GROUP BY r.message_id LIMIT 100`).all();

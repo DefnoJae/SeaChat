@@ -4,16 +4,13 @@ One public chat room for everyone who installs this Seanime extension. A purple 
 
 **Hosting:** Cloudflare Workers + D1 on the **Workers Free plan**. A free `workers.dev` HTTPS address is included, so you do not need to buy a domain or keep your computer online. The old paid Render blueprint has been removed.
 
-**Status:** prototype v0.2.0. Automated tests run the Cloudflare backend in its local runtime. Public deployment and rendering inside Seanime still need verification. The checked-in manifest currently connects to localhost.
+**Status:** deployed at https://seachat.seachat-defnojae.workers.dev. Live checks verified shared messages between two sessions, reporting, and moderator deletion. Rendering inside Seanime still needs verification.
 
-## What to do now
+## Install SeaChat
 
-1. Merge the free-hosting pull request.
-2. Create or sign in to a [Cloudflare account](https://dash.cloudflare.com/) and keep Workers on its Free plan.
-3. Follow [FREE_HOSTING.md](FREE_HOSTING.md) to deploy the backend.
-4. Build the extension with your actual `workers.dev` address, test it in Seanime, and share the manifest with users.
+Download `Manifest.json` from this repository, save it as `seachat.json` in Seanime's data directory `extensions` folder, reload Seanime, and enable SeaChat. Grant permission for `seachat.seachat-defnojae.workers.dev`, click the purple tray icon, and choose a display name. Everyone using this public build joins the same room.
 
-Nothing is deployed or billed merely by merging these files. The setup does not require a paid subscription. Free-tier quotas apply; requests can fail when those limits are reached.
+The backend uses Cloudflare Workers and D1 without purchasing a domain or upgrading a subscription. Free-tier quotas apply. See [FREE_HOSTING.md](FREE_HOSTING.md) to deploy your own room.
 
 ## Try locally
 
@@ -33,7 +30,7 @@ npm run worker:dev
 
 Both local servers use port 8787; run one at a time. Copy `Manifest.json` into Seanime's data directory `extensions` folder as `seachat.json`, reload Seanime, enable SeaChat, and grant its chat domain permission. Click the purple tray icon and choose a display name.
 
-The JSON embeds the plugin source and connects to `http://127.0.0.1:8787` until you build it for your public server. A local address reaches the computer running Seanime, so distribute a public build for people on other computers.
+The checked-in manifest connects to the public room. For local testing, run `node build.mjs http://127.0.0.1:8787`, then restore the public build with `node build.mjs https://seachat.seachat-defnojae.workers.dev`.
 
 ## Features
 
