@@ -4,11 +4,11 @@ One public chat room for everyone who installs this Seanime extension. A purple 
 
 **Hosting:** Cloudflare Workers + D1 on the **Workers Free plan**. A free `workers.dev` HTTPS address is included, so you do not need to buy a domain or keep your computer online. The old paid Render blueprint has been removed.
 
-**Status:** deployed at https://seachat.seachat-defnojae.workers.dev. Live checks verified shared messages between two sessions, reporting, and moderator deletion. Rendering inside Seanime still needs verification.
+**Status:** deployed at https://seachat.seachat-defnojae.workers.dev. v0.4.0 live checks verified two-session profiles, replies, unread lists, context loading and deleted originals. Tray-side positioning and controls were verified in installed Seanime.
 
 ## Install SeaChat
 
-Download `Manifest.json` from this repository, save it as `seachat.json` in Seanime's data directory `extensions` folder, reload Seanime, and enable SeaChat. Grant network permission for `seachat.seachat-defnojae.workers.dev` and the storage permission that remembers your session. Click the purple tray icon and choose a display name. Everyone using this public build joins the same room. Version 0.3.0 uses Seanime's Webview API, available since v3.3.0.
+Download `Manifest.json` from this repository, save it as `seachat.json` in Seanime's data directory `extensions` folder, reload Seanime, and enable SeaChat. Grant network permission for `seachat.seachat-defnojae.workers.dev` and the storage permission that remembers your session. Click the purple tray icon and choose a display name. Everyone using this public build joins the same room. Version 0.4.0 uses Seanime's Webview API, available since v3.3.0.
 
 The backend uses Cloudflare Workers and D1 without purchasing a domain or upgrading a subscription. Free-tier quotas apply. See [FREE_HOSTING.md](FREE_HOSTING.md) to deploy your own room.
 
