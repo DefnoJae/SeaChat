@@ -84,6 +84,24 @@ export default {
       const user = credential ? await statement('SELECT id,name,banned,color,avatar,avatar_version FROM users WHERE token=?', credentialHash).first() : null;
       if (!user) fail(401, 'Join the room first.');
       if (user.banned) fail(403, 'This account has been banned.');
+      if (['PATCH', 'DELETE'].includes(request.method) && /^\/messages\/\d+$/.test(url.pathname)) {
+        const id = messageId(Number(url.pathname.split('/').pop()));
+        const message = await statement('SELECT user_id FROM messages WHERE id=?', id).first();
+        if (!message) fail(404, 'Message is no longer available.');
+        if (message.user_id !== user.id) fail(403, 'You can only change your own messages.');
+        await limit(env.WRITE_LIMIT, 'message-change:' + user.id);
+        if (request.method === 'PATCH') {
+          const data = await readBody(request);
+          const text = typeof data.text === 'string' ? data.text.trim() : '';
+          if (!text || text.length > 1000 || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)) fail(400, 'Messages must contain 1–1000 characters.');
+          const result = await statement('UPDATE messages SET text=? WHERE id=? AND user_id=? RETURNING id', text, id, user.id).first();
+          if (!result) fail(404, 'Message is no longer available.');
+        } else {
+          const result = await statement('DELETE FROM messages WHERE id=? AND user_id=? RETURNING id', id, user.id).first();
+          if (!result) fail(404, 'Message is no longer available.');
+        }
+        return reply(200, { ok: true });
+      }
       if (request.method === 'GET' && url.pathname === '/replies') {
         const result = await statement('SELECT id,created_at AS createdAt FROM messages WHERE reply_to_user_id=? AND user_id<>? AND id>? ORDER BY id LIMIT 1000', user.id, user.id, afterId(url.searchParams.get('after'))).all();
         return reply(200, { replies: result.results });

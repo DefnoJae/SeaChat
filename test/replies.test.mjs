@@ -27,7 +27,7 @@ for (const platform of ['Node', 'Cloudflare']) test(platform + ': replies, recip
     }] }));
     t.after(() => mf.dispose());
     const db = await mf.getD1Database('DB');
-    for (const name of ['0001_chat.sql', '0002_profiles.sql', '0003_replies.sql']) {
+    for (const name of ['0001_chat.sql', '0002_profiles.sql', '0003_replies.sql', '0004_message_edits.sql']) {
       const sql = readFileSync(new URL('../cloudflare/migrations/' + name, import.meta.url), 'utf8');
       const statements = sql.split(/;\s*(?=CREATE|INSERT|PRAGMA|ALTER|UPDATE|$)/).filter(s => s.trim());
       await db.batch(statements.map(s => db.prepare(s)));
@@ -55,6 +55,18 @@ for (const platform of ['Node', 'Cloudflare']) test(platform + ': replies, recip
   assert.deepEqual((await call('/replies?after=' + response.data.id, 'GET', alice.token)).data.replies, []);
   assert.deepEqual((await call('/replies', 'GET', bob.token)).data.replies, []);
   assert.equal((await call('/replies?after=abc', 'GET', alice.token)).status, 400);
+  assert.equal((await call('/messages/' + original.data.id, 'PATCH', '', { text: 'unauthenticated' })).status, 401);
+  assert.equal((await call('/messages/' + original.data.id, 'PATCH', bob.token, { text: 'spoofed', userId: alice.userId })).status, 403);
+  assert.equal((await call('/messages/' + original.data.id, 'DELETE', bob.token)).status, 403);
+  assert.equal((await call('/messages/' + original.data.id, 'PATCH', alice.token, { text: '   ' })).status, 400);
+  assert.equal((await call('/messages/' + original.data.id, 'PATCH', alice.token, { text: 'x'.repeat(1001) })).status, 400);
+  const beforeEdit = (await call('/messages', 'GET', alice.token)).data;
+  assert.equal((await call('/messages/' + original.data.id, 'PATCH', alice.token, { text: 'Edited original' })).status, 200);
+  const edited = (await call('/messages' + (beforeEdit.revision ? '?revision=' + beforeEdit.revision : ''), 'GET', bob.token)).data;
+  assert.equal(edited.messages.find(m => m.id === original.data.id).text, 'Edited original');
+  assert.equal(edited.messages.find(m => m.id === response.data.id).reply.text, 'Edited original');
+  assert.equal(edited.messages.find(m => m.id === original.data.id).createdAt, original.data.createdAt);
+  await call('/messages/' + original.data.id + '/report', 'POST', bob.token, { reason: 'Spam', details: 'Test report' });
   await new Promise(resolve => setTimeout(resolve, 2100));
   assert.equal((await call('/messages', 'POST', alice.token, { text: 'Self reply', replyToId: original.data.id })).status, 201);
   assert.equal((await call('/replies', 'GET', alice.token)).data.replies.length, 1);
@@ -62,7 +74,10 @@ for (const platform of ['Node', 'Cloudflare']) test(platform + ': replies, recip
   assert.ok(!(await call('/messages', 'GET', alice.token)).data.messages.some(m => m.id === original.data.id));
   const context = await call('/messages/context/' + original.data.id, 'GET', bob.token);
   assert.equal(context.status, 200); assert.ok(context.data.messages.some(m => m.id === original.data.id)); assert.ok(context.data.messages.length <= 100);
-  await call('/admin/messages/' + original.data.id, 'DELETE', 'admin');
+  assert.equal((await call('/messages/' + original.data.id, 'DELETE', alice.token)).status, 200);
+  assert.equal((await call('/messages/' + original.data.id, 'DELETE', alice.token)).status, 404);
+  assert.equal((await call('/messages/' + original.data.id, 'PATCH', alice.token, { text: 'restore' })).status, 404);
+  assert.ok(!(await call('/admin/reports', 'GET', 'admin')).data.some(r => r.message_id === original.data.id));
   const deleted = (await call('/messages/context/' + response.data.id, 'GET', alice.token)).data.messages.find(m => m.id === response.data.id);
   assert.equal(deleted.reply.available, false); assert.equal(deleted.reply.text, null); assert.equal(deleted.reply.name, null);
   assert.equal((await call('/messages/context/' + original.data.id, 'GET', bob.token)).status, 404);

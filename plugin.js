@@ -94,6 +94,11 @@ function init() {
       latestMessages = latestMessages.map(apply);
       update({ profile, messages: state.get().messages.map(apply) }); revision = ""; await refreshNow();
     }));
+    for (const kind of ["edit", "delete"]) panel.channel.on(kind, data => action(kind, async () => {
+      if (!Number.isSafeInteger(data.messageId) || data.messageId < 1) throw new Error("Select a message.");
+      await request("/messages/" + data.messageId, kind === "edit" ? "PATCH" : "DELETE", kind === "edit" ? { text: data.text } : undefined);
+      revision = ""; await refreshNow();
+    }));
     panel.channel.on("report", data => action("report", async () => {
       if (!Number.isSafeInteger(data.messageId) || data.messageId < 1) throw new Error("Select a message.");
       await request("/messages/" + data.messageId + "/report", "POST", { reason: data.reason, details: data.details });

@@ -28,6 +28,7 @@ test('Cloudflare runtime: shared D1 history, quiet polls, moderation, races, ret
   await db.batch(profiles.split(';').map(sql => sql.trim()).filter(Boolean).map(sql => db.prepare(sql)));
   const replies = readFileSync(new URL('../cloudflare/migrations/0003_replies.sql', import.meta.url), 'utf8');
   await db.batch(replies.split(';').map(sql => sql.trim()).filter(Boolean).map(sql => db.prepare(sql)));
+  await db.prepare(readFileSync(new URL('../cloudflare/migrations/0004_message_edits.sql', import.meta.url), 'utf8')).run();
   async function call(path, method = 'GET', token = '', data, ip = '192.0.2.1') {
     const response = await mf.dispatchFetch('https://seachat.example.com' + path, {
       method, headers: { Authorization: 'Bearer ' + token, 'CF-Connecting-IP': ip },

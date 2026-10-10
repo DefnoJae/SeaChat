@@ -8,7 +8,7 @@ One public chat room for everyone who installs this Seanime extension. A purple 
 
 ## Install SeaChat
 
-Download `Manifest.json` from this repository, save it as `seachat.json` in Seanime's data directory `extensions` folder, reload Seanime, and enable SeaChat. Grant network permission for `seachat.seachat-defnojae.workers.dev` and the storage permission that remembers your session. Click the purple tray icon and choose a display name. Everyone using this public build joins the same room. Version 0.4.0 uses Seanime's Webview API, available since v3.3.0.
+Download `Manifest.json` from this repository, save it as `seachat.json` in Seanime's data directory `extensions` folder, reload Seanime, and enable SeaChat. Grant network permission for `seachat.seachat-defnojae.workers.dev` and the storage permission that remembers your session. Click the purple tray icon and choose a display name. Everyone using this public build joins the same room. Version 0.5.0 uses Seanime's Webview API, available since v3.3.0.
 
 The backend uses Cloudflare Workers and D1 without purchasing a domain or upgrading a subscription. Free-tier quotas apply. See [FREE_HOSTING.md](FREE_HOSTING.md) to deploy your own room.
 
@@ -100,3 +100,11 @@ Authenticated API additions: `POST /messages` accepts optional `replyToId`; hist
 Tests cover shared history, authentication, profile validation and sharing, report details, moderation, Node persistence, the Webview bridge, manifest generation, and the real local Cloudflare runtime including simultaneous sends, rate limits, revision polling, deletion visibility, and retention. CI validates the Worker bundle and checks for manifest drift. Browser checks also exercise the UI in a sandbox with Seanime's `allow-scripts allow-forms` configuration. Final interaction inside the user's installed Seanime remains a user check.
 
 References: [Seanime plugin guide](https://seanime.gitbook.io/seanime-extensions/plugins/write-test-share), [permissions](https://seanime.gitbook.io/seanime-extensions/plugins/permissions), and [Cloudflare rate limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/).
+
+### Editing, deleting and reporting messages
+
+The three-dot menu offers Edit and Delete for messages owned by your current session. Editing updates the shared text and reply previews; deletion requires confirmation and removes the message from the chat for everyone. Replies to removed messages show “Original message unavailable”. An older session with the same display name remains a separate owner.
+
+Reports store the selected message ID, reporter session, timestamp, reason and optional details for moderator review. Repeat reports from the same session for the same message are deduplicated. Reporting does not automatically hide messages, delete messages or ban senders. The authenticated admin API lists reports and permits message deletion or session bans; no moderation inbox, push alert or email alert is currently implemented.
+
+Authenticated `PATCH /messages/<id>` accepts `{text}` and `DELETE /messages/<id>` permanently removes a retained message. Both enforce ownership on the server and apply write rate limits. No edit history is kept.

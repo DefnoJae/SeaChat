@@ -37,6 +37,12 @@ test('webview bridge restores sessions, saves profiles, reports and stops hidden
   assert.equal(current.messages[0].name, 'New Alice');
   await handlers.get('report')({ messageId: 2, reason: 'Spam', details: 'repeated text' });
   assert.equal(JSON.parse(calls.find(c => c.url.endsWith('/report')).body).details, 'repeated text');
+  await handlers.get('edit')({ messageId: 2, text: 'Edited text' });
+  assert.equal(JSON.parse(calls.find(c => c.method === 'PATCH').body).text, 'Edited text');
+  assert.equal(current.success, 'edit');
+  await handlers.get('delete')({ messageId: 2 });
+  assert.ok(calls.some(c => c.method === 'DELETE' && c.url.endsWith('/messages/2')));
+  assert.equal(current.success, 'delete');
   handlers.get('close')();assert.equal(shown,false);assert.equal(cancelled,1);
   click(); await new Promise(resolve => setImmediate(resolve));
   assert.equal(intervals,2);assert.equal(calls.filter(c=>c.url.endsWith('/sessions')).length,1);

@@ -91,6 +91,23 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
       const user = credential ? db.prepare('SELECT id,name,banned,color,avatar,avatar_version FROM users WHERE token=?').get(hash(credential)) : null;
       if (!user) fail(401, 'Join the room first.');
       if (user.banned) fail(403, 'This account has been banned.');
+      if (['PATCH', 'DELETE'].includes(req.method) && /^\/messages\/\d+$/.test(url.pathname)) {
+        const id = messageId(Number(url.pathname.split('/').pop()));
+        const message = db.prepare('SELECT user_id FROM messages WHERE id=?').get(id);
+        if (!message) fail(404, 'Message is no longer available.');
+        if (message.user_id !== user.id) fail(403, 'You can only change your own messages.');
+        throttle('message-change:' + user.id, 20, 60_000);
+        if (req.method === 'PATCH') {
+          const data = await body(req);
+          const text = typeof data.text === 'string' ? data.text.trim() : '';
+          if (!text || text.length > 1000 || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)) fail(400, 'Messages must contain 1–1000 characters.');
+          if (!db.prepare('UPDATE messages SET text=? WHERE id=? AND user_id=?').run(text, id, user.id).changes) fail(404, 'Message is no longer available.');
+        } else {
+          db.prepare('DELETE FROM messages WHERE id=? AND user_id=?').run(id, user.id);
+          db.prepare('DELETE FROM reports WHERE message_id=?').run(id);
+        }
+        return reply(res, 200, { ok: true });
+      }
       if (req.method === 'GET' && url.pathname === '/replies') return reply(res, 200, { replies: db.prepare('SELECT id,created_at AS createdAt FROM messages WHERE reply_to_user_id=? AND user_id<>? AND id>? ORDER BY id LIMIT 1000').all(user.id, user.id, afterId(url.searchParams.get('after'))) });
       if (req.method === 'GET' && /^\/messages\/context\/\d+$/.test(url.pathname)) {
         const id = messageId(Number(url.pathname.split('/').pop()));

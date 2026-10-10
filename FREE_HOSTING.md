@@ -46,6 +46,8 @@ For an existing deployment, apply pending migrations before deploying updated Wo
 
 `0003_replies.sql` adds nullable reply references and an index for recipient lookups. It preserves existing messages, sessions and profiles. Apply it before deploying v0.4.0.
 
+`0004_message_edits.sql` refreshes the history revision whenever message text changes. Apply it before deploying v0.5.0 so connected users receive edits on their next poll.
+
 ## 4. Deploy the Worker
 
 ```sh
