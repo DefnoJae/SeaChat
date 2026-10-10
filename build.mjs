@@ -7,9 +7,9 @@ if (url.username || url.password || url.search || url.hash || url.pathname !== '
 const html = readFileSync(new URL('./chat.html', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const payload = readFileSync(new URL('./plugin.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n').replace('http://127.0.0.1:8787', url.origin).replace('"__SEACHAT_WEBVIEW__"', JSON.stringify(html));
 const manifest = {
-  id: 'seachat', name: 'SeaChat', version: '0.4.0', manifestURI: 'https://raw.githubusercontent.com/DefnoJae/SeaChat/main/Manifest.json',
+  id: 'seachat', name: 'SeaChat', version: '0.4.1', manifestURI: 'https://raw.githubusercontent.com/DefnoJae/SeaChat/main/Manifest.json',
   language: 'javascript', type: 'plugin', description: 'A shared public chat room for Seanime users.',
-  author: 'DefnoJae', icon: '', website: 'https://github.com/DefnoJae/SeaChat', readme: 'https://github.com/DefnoJae/SeaChat#readme', notes: 'Display names are unverified. Messages are public.', lang: 'en', payload,
+  author: 'DefnoJae', icon: 'https://raw.githubusercontent.com/DefnoJae/SeaChat/main/assets/icon.png', website: 'https://github.com/DefnoJae/SeaChat', readme: 'https://github.com/DefnoJae/SeaChat#readme', notes: 'Display names are unverified. Messages are public.', lang: 'en', payload,
   plugin: { version: '1', permissions: { scopes: ['storage'], allow: { networkAccess: { allowedDomains: [url.hostname], reasoning: 'Connect to the shared global chat server to send messages, update profiles and report messages.' } } } }
 };
 mkdirSync(new URL('./dist/', import.meta.url), { recursive: true });

@@ -10,7 +10,7 @@ function init() {
     function update(values) { state.set(Object.assign({}, state.get(), values)); }
     function serial(fn) { const result = queue.then(fn); queue = result.catch(() => {}); return result; }
     const panel = ctx.newWebview({ slot: "fixed", width: "460px", maxWidth: "max(1px, calc(100vw - 100px))", height: "min(640px, calc(100vh - 32px))", maxHeight: "calc(100vh - 32px)", style: "left:84px;top:50%;transform:translateY(-50%)", hidden: true, zIndex: 100, window: { draggable: false, frameless: true } });
-    const tray = ctx.newTray({ tooltipText: "SeaChat", withContent: false, iconUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23a78bfa' d='M4 3h16v14H8l-4 4V3zm3 4v2h10V7H7zm0 4v2h7v-2H7z'/%3E%3C/svg%3E" });
+    const tray = ctx.newTray({ tooltipText: "SeaChat", withContent: false, iconUrl: "https://raw.githubusercontent.com/DefnoJae/SeaChat/main/assets/icon.png" });
     panel.channel.sync("chat", state);
     panel.setContent(() => content);
     async function request(path, method, data) {
