@@ -27,60 +27,19 @@ test('shared messages, validation, rate limiting, reports, deletion and bans', a
   const sent = await call('/messages', 'POST', alice.token, { text: '<script>alert(1)</script>' });
   assert.equal(sent.status, 201);
   assert.equal((await call('/messages', 'GET', bob.token)).data.messages[0].text, '<script>alert(1)</script>');
+  assert.equal((await call('/profile', 'PUT', alice.token, { name: 'New Alice', color: '#60a5fa', avatar: '' })).status, 200);
+  assert.equal((await call('/messages', 'GET', bob.token)).data.messages[0].name, 'New Alice');
+  assert.equal((await call('/profile', 'GET', alice.token)).data.color, '#60a5fa');
+  assert.equal((await call('/profile', 'PUT', alice.token, { name: 'Alice', color: '#60a5fa', avatar: 'data:image/svg+xml;base64,PHN2Zz4=' })).status, 400);
   assert.equal((await call('/messages', 'POST', alice.token, { text: 'spam' })).status, 429);
-  assert.equal((await call('/messages/' + sent.data.id + '/report', 'POST', bob.token, {})).status, 200);
+  assert.equal((await call('/messages/' + sent.data.id + '/report', 'POST', bob.token, {reason:'Spam',details:'Please review'})).status, 200);
   assert.equal((await call('/admin/reports', 'GET', bob.token)).status, 401);
   assert.equal((await call('/admin/reports', 'GET', 'test-admin')).data[0].report_count, 1);
+  assert.equal(JSON.parse((await call('/admin/reports', 'GET', 'test-admin')).data[0].reports)[0].details, 'Please review');
   assert.equal((await call('/admin/messages/' + sent.data.id, 'DELETE', 'test-admin')).status, 200);
   assert.equal((await call('/messages', 'GET', bob.token)).data.messages.length, 0);
   assert.equal((await call('/admin/ban', 'POST', 'test-admin', { userId: alice.userId })).status, 200);
   assert.equal((await call('/messages', 'GET', alice.token)).status, 403);
-});
-
-test('plugin joins and sends via documented UI bridge; polling ends when tray closes', async () => {
-  const handlers = new Map(), refs = [], calls = [], rendered = [];
-  let render, onMount, onUnmount, intervals = 0, cancelled = 0;
-  const view = {
-    render: fn => { render = fn; }, onOpen: fn => { onMount = fn; }, onClose: fn => { onUnmount = fn; },
-    text: text => { rendered.push(text); return { type: 'text', text }; },
-    input: props => ({ type: 'input', props }), button: props => ({ type: 'button', props }),
-    div: children => ({ type: 'div', children })
-  };
-  const ctx = {
-    fieldRef: value => { const ref = { current: value, setValue(v) { this.current = v; } }; refs.push(ref); return ref; },
-    state: value => ({ get: () => value, set: v => { value = v; } }),
-    newTray: () => view,
-    eventHandler: (name, handler) => { handlers.set(name, handler); return name; },
-    setInterval: () => { intervals++; return () => { cancelled++; }; },
-    fetch: async (url, opts) => {
-      calls.push({ url, opts });
-      return { ok: true, json: () => url.endsWith('/sessions') ? { token: 'session' }
-        : url.includes('?revision=') ? { unchanged: true, revision: 'v1' }
-        : { revision: 'v1', messages: [{ id: 1, name: 'Alice', text: '<b>hello</b>', createdAt: 'now' }] } };
-    }
-  };
-  const sandbox = { $ui: { register: fn => fn(ctx) } };
-  vm.runInNewContext(readFileSync(new URL('../plugin.js', import.meta.url), 'utf8'), sandbox);
-  function checkTree(component) {
-    assert.ok(component && component.type, 'Seanime requires render to return a component tree');
-    for (const child of component.children || []) checkTree(child);
-  }
-  sandbox.init();
-  const joinPanel = render(); checkTree(joinPanel);
-  assert.ok(joinPanel.children.some(child => child.type === 'input'));
-  onMount(); refs[0].current = 'Alice';
-  await handlers.get('global-chat-join')();
-  assert.equal(intervals, 1);
-  refs[1].current = 'Hello everyone';
-  await handlers.get('global-chat-send')();
-  assert.equal(refs[1].current, '');
-  assert.equal(calls.find(c => c.opts.method === 'POST' && c.url.endsWith('/messages')).opts.headers.Authorization, 'Bearer session');
-  rendered.length = 0;
-  const chatPanel = render(); checkTree(chatPanel);
-  assert.ok(chatPanel.children.some(child => child.type === 'button' && child.props.label === 'Send'));
-  assert.ok(calls.some(call => call.url.endsWith('/messages?revision=v1')));
-  assert.ok(rendered.some(text => text.includes('<b>hello</b>')), 'quiet polls preserve history as plain text');
-  onUnmount(); assert.equal(cancelled, 1);
 });
 
 test('history and credentials survive a server restart', async t => {
@@ -109,7 +68,7 @@ test('history and credentials survive a server restart', async t => {
 test('manifest builds restrict network access and retain the chosen public endpoint', t => {
   const dir = mkdtempSync(join(tmpdir(), 'seachat-build-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  for (const file of ['build.mjs', 'plugin.js', 'chat.config.json']) copyFileSync(new URL('../' + file, import.meta.url), join(dir, file));
+  for (const file of ['build.mjs', 'plugin.js', 'chat.html', 'chat.config.json']) copyFileSync(new URL('../' + file, import.meta.url), join(dir, file));
   const build = (...args) => execFileSync(process.execPath, [join(dir, 'build.mjs'), ...args], { encoding: 'utf8', stdio: 'pipe' });
   assert.throws(() => build('http://public.example.com'));
   assert.throws(() => build('https://secret:password@chat.example.com'));

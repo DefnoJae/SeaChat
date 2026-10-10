@@ -30,7 +30,7 @@ Complete sign-in in your browser. Do not send anyone your password, API token, o
 npx wrangler d1 create seachat
 ```
 
-Copy the database UUID shown by Wrangler into `database_id` in `wrangler.jsonc`, replacing the all-zero placeholder. Keep the binding as `DB`, database name as `seachat`, and migrations directory as `cloudflare/migrations`. If Wrangler offers to update your configuration automatically, check that this single DB entry and migrations directory are preserved.
+Copy the database UUID shown by Wrangler into `database_id` in `wrangler.jsonc`, replacing the checked-in SeaChat database identifier with your own. Keep the binding as `DB`, database name as `seachat`, and migrations directory as `cloudflare/migrations`. If Wrangler offers to update your configuration automatically, check that this single DB entry and migrations directory are preserved.
 
 The database ID is an identifier, not a password. The rate limit namespace IDs in the same file must be unique in your Cloudflare account; the provided values work if no other binding uses them.
 
@@ -41,6 +41,8 @@ npm run db:remote
 ```
 
 Confirm the migration prompt. This creates the chat tables and triggers.
+
+For an existing deployment, apply pending migrations before deploying updated Worker code. `0002_profiles.sql` adds profile and report fields while preserving existing sessions and messages. The public SeaChat deployment already records its applied migrations.
 
 ## 4. Deploy the Worker
 

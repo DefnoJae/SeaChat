@@ -4,6 +4,7 @@ import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { COLORS, validateProfile, validateReport } from './profile.mjs';
 
 export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = process.env.ADMIN_TOKEN || '' } = {}) {
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
@@ -12,6 +13,10 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
     CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, token TEXT UNIQUE, name TEXT, banned INTEGER DEFAULT 0);
     CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, text TEXT, created_at TEXT);
     CREATE TABLE IF NOT EXISTS reports (message_id INTEGER, user_id INTEGER, created_at TEXT, PRIMARY KEY(message_id,user_id));`);
+  for (const [table, column, definition] of [
+    ['users','color',"TEXT NOT NULL DEFAULT '#a78bfa'"], ['users','avatar',"TEXT NOT NULL DEFAULT ''"],
+    ['users','avatar_version',"TEXT NOT NULL DEFAULT ''"], ['reports','reason',"TEXT NOT NULL DEFAULT 'Other'"], ['reports','details',"TEXT NOT NULL DEFAULT ''"]
+  ]) if (!db.prepare('PRAGMA table_info(' + table + ')').all().some(row => row.name === column)) db.exec('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + definition);
   const limits = new Map();
   const hash = value => createHash('sha256').update(value).digest('hex');
   const reply = (res, status, data) => {
@@ -30,12 +35,12 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
     for (const [key, times] of limits) if (!times.some(t => t > before)) limits.delete(key);
   }, 60_000);
   cleanup.unref();
-  async function body(req) {
+  async function body(req, maxBytes = 8192) {
     const chunks = [];
     let bytes = 0;
     for await (const chunk of req) {
       bytes += chunk.length;
-      if (bytes > 8192) fail(413, 'Request too large.');
+      if (bytes > maxBytes) fail(413, 'Request too large.');
       chunks.push(chunk);
     }
     try {
@@ -55,7 +60,7 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
         const a = Buffer.from(hash(credential)), b = Buffer.from(hash(adminToken));
         if (!adminToken || !timingSafeEqual(a, b)) fail(401, 'Admin authentication required.');
         if (req.method === 'GET' && url.pathname === '/admin/reports') {
-          return reply(res, 200, db.prepare(`SELECT r.message_id, m.user_id, m.name, m.text, COUNT(*) AS report_count FROM reports r LEFT JOIN messages m ON r.message_id=m.id GROUP BY r.message_id`).all());
+          return reply(res, 200, db.prepare(`SELECT r.message_id, m.user_id, m.name, m.text, COUNT(*) AS report_count, json_group_array(json_object('reason',r.reason,'details',r.details)) AS reports FROM reports r LEFT JOIN messages m ON r.message_id=m.id GROUP BY r.message_id`).all());
         }
         if (req.method === 'POST' && url.pathname === '/admin/ban') {
           const data = await body(req);
@@ -77,14 +82,27 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
         const name = typeof data.name === 'string' ? data.name.trim() : '';
         if (!/^[\p{L}\p{N}_ -]{2,24}$/u.test(name)) fail(400, 'Use a name of 2–24 letters, numbers, spaces, underscores or hyphens.');
         const token = randomBytes(32).toString('hex');
-        const result = db.prepare('INSERT INTO users(token,name) VALUES(?,?)').run(hash(token), name);
+        const result = db.prepare('INSERT INTO users(token,name,color) VALUES(?,?,?)').run(hash(token), name, COLORS[randomBytes(1)[0] % COLORS.length]);
         return reply(res, 201, { token, userId: Number(result.lastInsertRowid), name });
       }
-      const user = credential ? db.prepare('SELECT id,name,banned FROM users WHERE token=?').get(hash(credential)) : null;
+      const user = credential ? db.prepare('SELECT id,name,banned,color,avatar,avatar_version FROM users WHERE token=?').get(hash(credential)) : null;
       if (!user) fail(401, 'Join the room first.');
       if (user.banned) fail(403, 'This account has been banned.');
+      if (req.method === 'GET' && url.pathname === '/profile') return reply(res, 200, { userId: user.id, name: user.name, color: user.color, avatar: user.avatar, avatarVersion: user.avatar_version });
+      if (req.method === 'PUT' && url.pathname === '/profile') {
+        throttle('profile:' + user.id, 20, 60_000);
+        const profile = validateProfile(await body(req, 36000));
+        const version = profile.avatar === user.avatar ? user.avatar_version : randomBytes(16).toString('hex');
+        db.prepare('UPDATE users SET name=?,color=?,avatar=?,avatar_version=? WHERE id=?').run(profile.name, profile.color, profile.avatar, version, user.id);
+        return reply(res, 200, { userId: user.id, ...profile, avatarVersion: version });
+      }
+      if (req.method === 'GET' && /^\/avatars\/\d+$/.test(url.pathname)) {
+        const profile = db.prepare('SELECT avatar,avatar_version FROM users WHERE id=? AND banned=0').get(Number(url.pathname.split('/').pop()));
+        if (!profile) fail(404, 'Profile not found.');
+        return reply(res, 200, { avatar: profile.avatar, avatarVersion: profile.avatar_version });
+      }
       if (req.method === 'GET' && url.pathname === '/messages') {
-        const messages = db.prepare('SELECT id,user_id AS userId,name,text,created_at AS createdAt FROM messages ORDER BY id DESC LIMIT 100').all().reverse();
+        const messages = db.prepare('SELECT m.id,m.user_id AS userId,u.name,m.text,m.created_at AS createdAt,u.color,u.avatar_version AS avatarVersion FROM messages m JOIN users u ON u.id=m.user_id ORDER BY m.id DESC LIMIT 100').all().reverse();
         return reply(res, 200, { messages });
       }
       if (req.method === 'POST' && url.pathname === '/messages') {
@@ -101,9 +119,10 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
       }
       if (req.method === 'POST' && /^\/messages\/\d+\/report$/.test(url.pathname)) {
         throttle('report:' + user.id, 10, 60_000);
+        const report = validateReport(await body(req));
         const id = Number(url.pathname.split('/')[2]);
         if (!db.prepare('SELECT id FROM messages WHERE id=?').get(id)) fail(404, 'Message no longer exists.');
-        db.prepare('INSERT OR IGNORE INTO reports VALUES(?,?,?)').run(id, user.id, new Date().toISOString());
+        db.prepare('INSERT OR IGNORE INTO reports(message_id,user_id,created_at,reason,details) VALUES(?,?,?,?,?)').run(id, user.id, new Date().toISOString(), report.reason, report.details);
         return reply(res, 200, { ok: true });
       }
       fail(404, 'Unknown endpoint.');

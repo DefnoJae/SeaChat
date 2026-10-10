@@ -9,7 +9,10 @@ test('Cloudflare runtime: shared D1 history, quiet polls, moderation, races, ret
   const mf = new Miniflare(convertV4MiniflareOptions({ workers: [{
     name: 'seachat-test',
     modules: true,
-    scriptPath: fileURLToPath(new URL('../cloudflare/worker.mjs', import.meta.url)),
+    modules: [
+      { type: 'ESModule', path: fileURLToPath(new URL('../cloudflare/worker.mjs', import.meta.url)) },
+      { type: 'ESModule', path: fileURLToPath(new URL('../profile.mjs', import.meta.url)) }
+    ],
     compatibilityDate: config.compatibility_date,
     d1Databases: { DB: 'seachat-test' },
     bindings: { ADMIN_TOKEN: 'test-admin' },
@@ -21,6 +24,8 @@ test('Cloudflare runtime: shared D1 history, quiet polls, moderation, races, ret
   // Keep complete trigger bodies together, rather than splitting on their inner semicolons.
   const statements = migration.split(/;\s*(?=CREATE|INSERT|PRAGMA|$)/).map(sql => sql.trim()).filter(Boolean);
   await db.batch(statements.map(sql => db.prepare(sql)));
+  const profiles = readFileSync(new URL('../cloudflare/migrations/0002_profiles.sql', import.meta.url), 'utf8');
+  await db.batch(profiles.split(';').map(sql => sql.trim()).filter(Boolean).map(sql => db.prepare(sql)));
   async function call(path, method = 'GET', token = '', data, ip = '192.0.2.1') {
     const response = await mf.dispatchFetch('https://seachat.example.com' + path, {
       method, headers: { Authorization: 'Bearer ' + token, 'CF-Connecting-IP': ip },
@@ -50,10 +55,25 @@ test('Cloudflare runtime: shared D1 history, quiet polls, moderation, races, ret
   assert.equal(history.data.messages.length, 1);
   assert.equal(history.data.messages[0].text, posted.text);
   assert.notEqual(history.data.revision, empty.data.revision);
-  assert.equal((await call('/messages/' + posted.id + '/report', 'POST', bob.token, {})).status, 200);
+  const original = await call('/profile', 'GET', alice.token);
+  assert.ok(original.data.color.startsWith('#'));
+  assert.equal((await call('/profile', 'PUT', bob.token, { name: '<script>', color: '#a78bfa', avatar: '' })).status, 400);
+  assert.equal((await call('/profile', 'PUT', alice.token, { name: 'Alice', color: 'red', avatar: '' })).status, 400);
+  assert.equal((await call('/profile', 'PUT', alice.token, { name: 'Alice', color: '#a78bfa', avatar: 'data:image/svg+xml;base64,PHN2Zz4=' })).status, 400);
+  const avatar = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN9sAAAAASUVORK5CYII=';
+  const saved = await call('/profile', 'PUT', alice.token, { name: 'New Alice', color: '#60a5fa', avatar });
+  assert.equal(saved.status, 200);
+  assert.equal((await call('/avatars/' + alice.userId, 'GET', bob.token)).data.avatar, avatar);
+  const changed = await call('/messages?revision=' + history.data.revision, 'GET', bob.token);
+  assert.equal(changed.data.messages[0].name, 'New Alice');
+  assert.equal(changed.data.messages[0].color, '#60a5fa');
+  assert.equal(changed.data.messages[0].avatarVersion, saved.data.avatarVersion);
+  assert.equal((await call('/profile', 'GET', alice.token)).data.name, 'New Alice');
+  assert.equal((await call('/messages/' + posted.id + '/report', 'POST', bob.token, {reason:'Harassment',details:'Please review this message'})).status, 200);
   assert.equal((await call('/messages/' + posted.id + '/report', 'POST', bob.token, {})).status, 200);
   assert.equal((await call('/admin/reports', 'GET', bob.token)).status, 401);
   assert.equal((await call('/admin/reports', 'GET', 'test-admin')).data[0].report_count, 1);
+  assert.equal(JSON.parse((await call('/admin/reports', 'GET', 'test-admin')).data[0].reports)[0].details, 'Please review this message');
   assert.equal((await call('/admin/messages/' + posted.id, 'DELETE', 'test-admin')).status, 200);
   const removed = await call('/messages?revision=' + history.data.revision, 'GET', bob.token);
   assert.deepEqual(removed.data.messages, []);

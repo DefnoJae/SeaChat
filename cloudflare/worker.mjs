@@ -1,3 +1,4 @@
+import { COLORS, validateProfile, validateReport } from '../profile.mjs';
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const reply = (status, value) => Response.json(value, {
   status,
@@ -7,7 +8,7 @@ async function hash(value) {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2, '0')).join('');
 }
-async function readBody(request) {
+async function readBody(request, maxBytes = 8192) {
   const reader = request.body?.getReader();
   if (!reader) fail(400, 'Expected a JSON object.');
   const chunks = [];
@@ -17,7 +18,7 @@ async function readBody(request) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > 8192) { await reader.cancel(); fail(413, 'Request too large.'); }
+      if (size > maxBytes) { await reader.cancel(); fail(413, 'Request too large.'); }
       chunks.push(value);
     }
   } finally { reader.releaseLock(); }
@@ -49,7 +50,8 @@ export default {
       if (url.pathname.startsWith('/admin/')) {
         if (!env.ADMIN_TOKEN || !crypto.subtle.timingSafeEqual(new TextEncoder().encode(credentialHash), new TextEncoder().encode(await hash(env.ADMIN_TOKEN)))) fail(401, 'Admin authentication required.');
         if (request.method === 'GET' && url.pathname === '/admin/reports') {
-          const result = await statement(`SELECT r.message_id, m.user_id, m.name, m.text, COUNT(*) AS report_count
+          const result = await statement(`SELECT r.message_id, m.user_id, m.name, m.text, COUNT(*) AS report_count,
+            json_group_array(json_object('reason',r.reason,'details',r.details)) AS reports
             FROM reports r JOIN messages m ON r.message_id=m.id GROUP BY r.message_id LIMIT 100`).all();
           return reply(200, result.results);
         }
@@ -74,19 +76,36 @@ export default {
         const name = typeof data.name === 'string' ? data.name.trim() : '';
         if (!/^[\p{L}\p{N}_ -]{2,24}$/u.test(name)) fail(400, 'Use a name of 2–24 letters, numbers, spaces, underscores or hyphens.');
         const token = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, '0')).join('');
-        const result = await statement('INSERT INTO users(token,name) VALUES(?,?) RETURNING id', await hash(token), name).first();
+        const color = COLORS[crypto.getRandomValues(new Uint8Array(1))[0] % COLORS.length];
+        const result = await statement('INSERT INTO users(token,name,color) VALUES(?,?,?) RETURNING id', await hash(token), name, color).first();
         return reply(201, { token, userId: result.id, name });
       }
-      const user = credential ? await statement('SELECT id,name,banned FROM users WHERE token=?', credentialHash).first() : null;
+      const user = credential ? await statement('SELECT id,name,banned,color,avatar,avatar_version FROM users WHERE token=?', credentialHash).first() : null;
       if (!user) fail(401, 'Join the room first.');
       if (user.banned) fail(403, 'This account has been banned.');
+      if (request.method === 'GET' && url.pathname === '/profile') return reply(200, { userId: user.id, name: user.name, color: user.color, avatar: user.avatar, avatarVersion: user.avatar_version });
+      if (request.method === 'PUT' && url.pathname === '/profile') {
+        await limit(env.WRITE_LIMIT, 'profile:' + user.id);
+        const profile = validateProfile(await readBody(request, 36000));
+        const version = profile.avatar === user.avatar ? user.avatar_version : crypto.randomUUID();
+        await env.DB.batch([
+          statement('UPDATE users SET name=?,color=?,avatar=?,avatar_version=? WHERE id=? AND banned=0', profile.name, profile.color, profile.avatar, version, user.id),
+          statement('UPDATE room SET revision=lower(hex(randomblob(16))) WHERE id=1')
+        ]);
+        return reply(200, { userId: user.id, ...profile, avatarVersion: version });
+      }
+      if (request.method === 'GET' && /^\/avatars\/\d+$/.test(url.pathname)) {
+        const profile = await statement('SELECT avatar,avatar_version FROM users WHERE id=? AND banned=0', Number(url.pathname.split('/').pop())).first();
+        if (!profile) fail(404, 'Profile not found.');
+        return reply(200, { avatar: profile.avatar, avatarVersion: profile.avatar_version });
+      }
       if (request.method === 'GET' && url.pathname === '/messages') {
         const current = await statement('SELECT revision FROM room WHERE id=1').first();
         if (url.searchParams.get('revision') === current.revision) return reply(200, { unchanged: true, revision: current.revision });
         // A transactional batch makes the revision and history a consistent snapshot.
         const results = await env.DB.batch([
           statement('SELECT revision FROM room WHERE id=1'),
-          statement('SELECT id,user_id AS userId,name,text,created_at AS createdAt FROM messages ORDER BY id DESC LIMIT 100')
+          statement('SELECT m.id,m.user_id AS userId,u.name,m.text,m.created_at AS createdAt,u.color,u.avatar_version AS avatarVersion FROM messages m JOIN users u ON u.id=m.user_id ORDER BY m.id DESC LIMIT 100')
         ]);
         return reply(200, { revision: results[0].results[0].revision, messages: results[1].results.reverse() });
       }
@@ -108,9 +127,10 @@ export default {
       }
       if (request.method === 'POST' && /^\/messages\/\d+\/report$/.test(url.pathname)) {
         await limit(env.WRITE_LIMIT, 'report:' + user.id);
+        const report = validateReport(await readBody(request));
         const id = Number(url.pathname.split('/')[2]);
-        const result = await statement(`INSERT OR IGNORE INTO reports(message_id,user_id,created_at)
-          SELECT id,?,? FROM messages WHERE id=? RETURNING message_id`, user.id, new Date().toISOString(), id).first();
+        const result = await statement(`INSERT OR IGNORE INTO reports(message_id,user_id,created_at,reason,details)
+          SELECT id,?,?,?,? FROM messages WHERE id=? RETURNING message_id`, user.id, new Date().toISOString(), report.reason, report.details, id).first();
         if (!result && !await statement('SELECT id FROM messages WHERE id=?', id).first()) fail(404, 'Message no longer exists.');
         return reply(200, { ok: true });
       }
