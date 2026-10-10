@@ -44,6 +44,8 @@ Confirm the migration prompt. This creates the chat tables and triggers.
 
 For an existing deployment, apply pending migrations before deploying updated Worker code. `0002_profiles.sql` adds profile and report fields while preserving existing sessions and messages. The public SeaChat deployment already records its applied migrations.
 
+`0003_replies.sql` adds nullable reply references and an index for recipient lookups. It preserves existing messages, sessions and profiles. Apply it before deploying v0.4.0.
+
 ## 4. Deploy the Worker
 
 ```sh

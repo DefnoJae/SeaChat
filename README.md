@@ -45,18 +45,24 @@ The checked-in manifest connects to the public room. For local testing, run `nod
 - Profile settings: change your display name, choose from seven name colors or randomize, upload or remove a profile picture.
 - Uploaded JPEG, PNG and WebP files are cropped to 96×96 JPEG thumbnails before sharing. Original uploads are limited to 5 MB; stored thumbnails to 24 KB. Initials appear until an image is uploaded.
 - Profile changes update names, colors and avatars on earlier visible messages. Your session survives extension reloads through Seanime's plugin storage.
+- Version 0.4.0 opens beside the left plugin tray, vertically centered, with responsive width and a standard gear icon.
+- Reply using the arrow beside a message's menu. A cancellable preview appears above the composer, and sent replies show a clickable quote.
+- Replies to your current session are highlighted. The “You were replied to” notice jumps to the oldest unread reply; “Mark all read” clears remaining notices. Read state survives closing or reloading chat.
+- Click quotes or notices to load retained older context, then use “Back to latest” to return. Deleted originals display “Original message unavailable”; removed text is not retained in quotes.
 
 ## Free-tier capacity
 
 Cloudflare currently includes 100,000 Worker requests per day, 5 million D1 rows read per day, 100,000 rows written per day, and 5 GB of total D1 storage on the Free plan. Limits are shared with other applications in your account. CPU and per-database limits also apply.
 
-At a ten-second polling interval, one continuously open chat uses about 8640 poll requests per day, before joins, sends, and reports. This means the free setup suits a small community, not unlimited simultaneous users. Quiet polls avoid loading the full history, but active conversations use more database reads. Requests stop succeeding when a quota is reached; this setup does not upgrade your account automatically.
+At a ten-second polling interval, one continuously open chat uses about 17,280 requests per day for history and reply notices, before joins, sends, reports and avatar loads. Reading older context adds another request per poll. This means the free setup suits a small community, not unlimited simultaneous users. Quiet polls avoid loading the full history, but active conversations use more database reads. Requests stop succeeding when a quota is reached; this setup does not upgrade your account automatically.
 
 Sources: [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) and [D1 pricing and Free-plan behavior](https://developers.cloudflare.com/d1/platform/pricing/).
 
 ## Prototype limits
 
 Display names are unverified and can be duplicated. A ban blocks a session; a person can create another session. AniList verification, presence, general message attachments, and a moderation dashboard are not included. Uninstalling the extension clears its saved session; profiles cannot currently be recovered on another computer without that session.
+
+Profiles belong to session IDs, not display names. Editing your current profile changes messages from that session; earlier messages posted from a different session keep their own profiles even when their names look similar. Reply notices also belong to the current session and are checked only while chat is open. Replies outside the 1,000-message retention window cannot be recovered.
 
 Sessions use random bearer credentials; only token hashes are stored on the server. The extension stores its session token locally with Seanime's storage permission; it is never sent to the Webview. User records do not expire automatically yet. Messages, names and profile pictures are public, and the server operator can read messages and reports. Avoid posting private information. Node's local database and Cloudflare D1 are separate stores; local history is not migrated automatically.
 
@@ -85,7 +91,9 @@ npm run worker:check
 npm run build
 ```
 
-`plugin.js` contains the Seanime bridge; `chat.html` contains the sandboxed UI. `profile.mjs` validates shared profiles and reports. `cloudflare/worker.mjs` and its D1 migrations implement free public hosting. `server.mjs` is the optional local Node alternative. Docker/Compose are included for a server you already own.
+`plugin.js` contains the Seanime bridge; `chat.html` contains the sandboxed UI. `profile.mjs` validates shared profiles and reports; `messages.mjs` defines shared reply queries and validation. `cloudflare/worker.mjs` and its D1 migrations implement free public hosting. `server.mjs` is the optional local Node alternative. Docker/Compose are included for a server you already own. The Lucide settings icon license is included in `THIRD_PARTY_NOTICES.md` and embedded in the distributed UI.
+
+Authenticated API additions: `POST /messages` accepts optional `replyToId`; history messages contain nullable `reply` metadata. `GET /replies?after=<id>` returns incoming reply IDs and timestamps in ascending order, excluding self-replies. `GET /messages/context/<id>` returns up to 100 surrounding messages or 404 when the target is unavailable. The recipient is derived from the original message on the server.
 
 `build.mjs` embeds the plugin in `Manifest.json` and `dist/seachat.json`. Pass your HTTPS origin to save it in `chat.config.json`; later builds reuse it. The manifest points to this repository for updates. Do not overwrite a public manifest with a local test build.
 

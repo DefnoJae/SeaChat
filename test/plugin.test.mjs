@@ -14,7 +14,7 @@ test('webview bridge restores sessions, saves profiles, reports and stops hidden
     newTray: () => ({ onClick: fn => { click = fn; } }), setInterval: () => { intervals++; return () => { cancelled++; }; },
     fetch: async (url, options) => {
       calls.push({ url, ...options });
-      let data = url.endsWith('/sessions') ? { token: 'credential' } : url.endsWith('/profile') ? profile
+      let data = url.includes('/replies?') ? { replies: [] } : url.endsWith('/sessions') ? { token: 'credential' } : url.endsWith('/profile') ? profile
         : url.includes('?revision=') ? { unchanged: true, revision: 'v1' } : { messages, revision: 'v1' };
       if (options.method === 'PUT') Object.assign(profile, JSON.parse(options.body));
       return { ok: true, status: 200, json: () => data };
@@ -34,6 +34,7 @@ test('webview bridge restores sessions, saves profiles, reports and stops hidden
   assert.equal(calls.find(c => c.url.endsWith('/messages') && c.method === 'POST').headers.Authorization, 'Bearer credential');
   await handlers.get('profile')({ name: 'New Alice', color: '#60a5fa', avatar: '' });
   assert.equal(current.profile.name, 'New Alice');
+  assert.equal(current.messages[0].name, 'New Alice');
   await handlers.get('report')({ messageId: 2, reason: 'Spam', details: 'repeated text' });
   assert.equal(JSON.parse(calls.find(c => c.url.endsWith('/report')).body).details, 'repeated text');
   handlers.get('close')();assert.equal(shown,false);assert.equal(cancelled,1);

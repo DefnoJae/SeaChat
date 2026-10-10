@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { COLORS, validateProfile, validateReport } from './profile.mjs';
+import { MESSAGE_SELECT, messageRows, messageId, afterId } from './messages.mjs';
 
 export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = process.env.ADMIN_TOKEN || '' } = {}) {
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
@@ -15,8 +16,10 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
     CREATE TABLE IF NOT EXISTS reports (message_id INTEGER, user_id INTEGER, created_at TEXT, PRIMARY KEY(message_id,user_id));`);
   for (const [table, column, definition] of [
     ['users','color',"TEXT NOT NULL DEFAULT '#a78bfa'"], ['users','avatar',"TEXT NOT NULL DEFAULT ''"],
-    ['users','avatar_version',"TEXT NOT NULL DEFAULT ''"], ['reports','reason',"TEXT NOT NULL DEFAULT 'Other'"], ['reports','details',"TEXT NOT NULL DEFAULT ''"]
+    ['users','avatar_version',"TEXT NOT NULL DEFAULT ''"], ['reports','reason',"TEXT NOT NULL DEFAULT 'Other'"], ['reports','details',"TEXT NOT NULL DEFAULT ''"],
+    ['messages','reply_to_id','INTEGER'], ['messages','reply_to_user_id','INTEGER']
   ]) if (!db.prepare('PRAGMA table_info(' + table + ')').all().some(row => row.name === column)) db.exec('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + definition);
+  db.exec('CREATE INDEX IF NOT EXISTS messages_by_reply_recipient ON messages(reply_to_user_id,id)');
   const limits = new Map();
   const hash = value => createHash('sha256').update(value).digest('hex');
   const reply = (res, status, data) => {
@@ -88,6 +91,14 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
       const user = credential ? db.prepare('SELECT id,name,banned,color,avatar,avatar_version FROM users WHERE token=?').get(hash(credential)) : null;
       if (!user) fail(401, 'Join the room first.');
       if (user.banned) fail(403, 'This account has been banned.');
+      if (req.method === 'GET' && url.pathname === '/replies') return reply(res, 200, { replies: db.prepare('SELECT id,created_at AS createdAt FROM messages WHERE reply_to_user_id=? AND user_id<>? AND id>? ORDER BY id LIMIT 1000').all(user.id, user.id, afterId(url.searchParams.get('after'))) });
+      if (req.method === 'GET' && /^\/messages\/context\/\d+$/.test(url.pathname)) {
+        const id = messageId(Number(url.pathname.split('/').pop()));
+        const rows = db.prepare(MESSAGE_SELECT + ` WHERE m.id IN (SELECT id FROM messages WHERE id<=? ORDER BY id DESC LIMIT 50)
+          OR m.id IN (SELECT id FROM messages WHERE id>? ORDER BY id LIMIT 50) ORDER BY m.id`).all(id, id);
+        if (!rows.some(m => m.id === id)) fail(404, 'Message is no longer available.');
+        return reply(res, 200, { messages: messageRows(rows), targetId: id });
+      }
       if (req.method === 'GET' && url.pathname === '/profile') return reply(res, 200, { userId: user.id, name: user.name, color: user.color, avatar: user.avatar, avatarVersion: user.avatar_version });
       if (req.method === 'PUT' && url.pathname === '/profile') {
         throttle('profile:' + user.id, 20, 60_000);
@@ -102,17 +113,20 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
         return reply(res, 200, { avatar: profile.avatar, avatarVersion: profile.avatar_version });
       }
       if (req.method === 'GET' && url.pathname === '/messages') {
-        const messages = db.prepare('SELECT m.id,m.user_id AS userId,u.name,m.text,m.created_at AS createdAt,u.color,u.avatar_version AS avatarVersion FROM messages m JOIN users u ON u.id=m.user_id ORDER BY m.id DESC LIMIT 100').all().reverse();
-        return reply(res, 200, { messages });
+        const messages = db.prepare(MESSAGE_SELECT + ' ORDER BY m.id DESC LIMIT 100').all().reverse();
+        return reply(res, 200, { messages: messageRows(messages) });
       }
       if (req.method === 'POST' && url.pathname === '/messages') {
         const data = await body(req);
         const text = typeof data.text === 'string' ? data.text.trim() : '';
         if (!text || text.length > 1000 || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)) fail(400, 'Messages must contain 1–1000 characters.');
+        const replyToId = messageId(data.replyToId, true);
+        const original = replyToId === null ? null : db.prepare('SELECT user_id FROM messages WHERE id=?').get(replyToId);
+        if (replyToId !== null && !original) fail(404, 'Original message is no longer available.');
         throttle('send:' + user.id, 1, 2000);
         throttle('sendip:' + ip, 20, 60_000);
         const createdAt = new Date().toISOString();
-        const result = db.prepare('INSERT INTO messages(user_id,name,text,created_at) VALUES(?,?,?,?)').run(user.id, user.name, text, createdAt);
+        const result = db.prepare('INSERT INTO messages(user_id,name,text,created_at,reply_to_id,reply_to_user_id) VALUES(?,?,?,?,?,?)').run(user.id, user.name, text, createdAt, replyToId, original?.user_id ?? null);
         db.prepare('DELETE FROM messages WHERE id NOT IN (SELECT id FROM messages ORDER BY id DESC LIMIT 1000)').run();
         db.prepare('DELETE FROM reports WHERE message_id NOT IN (SELECT id FROM messages)').run();
         return reply(res, 201, { id: Number(result.lastInsertRowid), userId: user.id, name: user.name, text, createdAt });
