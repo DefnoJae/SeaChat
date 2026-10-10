@@ -42,7 +42,9 @@ test('plugin joins and sends via documented UI bridge; polling ends when tray cl
   let render, onMount, onUnmount, intervals = 0, cancelled = 0;
   const view = {
     render: fn => { render = fn; }, onOpen: fn => { onMount = fn; }, onClose: fn => { onUnmount = fn; },
-    text: text => { rendered.push(text); return { text }; }, input: () => ({}), button: () => ({}), div: () => ({})
+    text: text => { rendered.push(text); return { type: 'text', text }; },
+    input: props => ({ type: 'input', props }), button: props => ({ type: 'button', props }),
+    div: children => ({ type: 'div', children })
   };
   const ctx = {
     fieldRef: value => { const ref = { current: value, setValue(v) { this.current = v; } }; refs.push(ref); return ref; },
@@ -59,7 +61,14 @@ test('plugin joins and sends via documented UI bridge; polling ends when tray cl
   };
   const sandbox = { $ui: { register: fn => fn(ctx) } };
   vm.runInNewContext(readFileSync(new URL('../plugin.js', import.meta.url), 'utf8'), sandbox);
-  sandbox.init(); render(); onMount(); refs[0].current = 'Alice';
+  function checkTree(component) {
+    assert.ok(component && component.type, 'Seanime requires render to return a component tree');
+    for (const child of component.children || []) checkTree(child);
+  }
+  sandbox.init();
+  const joinPanel = render(); checkTree(joinPanel);
+  assert.ok(joinPanel.children.some(child => child.type === 'input'));
+  onMount(); refs[0].current = 'Alice';
   await handlers.get('global-chat-join')();
   assert.equal(intervals, 1);
   refs[1].current = 'Hello everyone';
@@ -67,7 +76,8 @@ test('plugin joins and sends via documented UI bridge; polling ends when tray cl
   assert.equal(refs[1].current, '');
   assert.equal(calls.find(c => c.opts.method === 'POST' && c.url.endsWith('/messages')).opts.headers.Authorization, 'Bearer session');
   rendered.length = 0;
-  render();
+  const chatPanel = render(); checkTree(chatPanel);
+  assert.ok(chatPanel.children.some(child => child.type === 'button' && child.props.label === 'Send'));
   assert.ok(calls.some(call => call.url.endsWith('/messages?revision=v1')));
   assert.ok(rendered.some(text => text.includes('<b>hello</b>')), 'quiet polls preserve history as plain text');
   onUnmount(); assert.equal(cancelled, 1);

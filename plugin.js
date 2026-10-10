@@ -79,19 +79,22 @@ function init() {
     });
     view.onClose(() => { mounted = false; if (cancelPoll) cancelPoll(); cancelPoll = null; });
     view.render(() => {
-      view.text("SeaChat · Global Chat", { style: { fontSize: "24px", fontWeight: "700" } });
-      view.text("One room for everyone with this extension. Display names are unverified. Be kind; avoid spoilers and personal information.");
-      view.text(status.get());
+      const items = [
+        view.text("SeaChat · Global Chat", { style: { fontSize: "24px", fontWeight: "700" } }),
+        view.text("One room for everyone with this extension. Display names are unverified. Be kind; avoid spoilers and personal information."),
+        view.text(status.get())
+      ];
       if (!joined.get()) {
-        view.input({ label: "Display name", placeholder: "2–24 characters", fieldRef: name });
-        view.button({ label: "Join public room", onClick: join, loading: busy.get() });
+        items.push(view.input({ label: "Display name", placeholder: "2–24 characters", fieldRef: name }));
+        items.push(view.button({ label: "Join public room", onClick: join, loading: busy.get() }));
       } else {
-        view.div(messages.get().map(m => view.text("#" + m.id + " · " + m.name + " · " + m.createdAt + "\n" + m.text, { style: { whiteSpace: "pre-wrap", padding: "12px", borderBottom: "1px solid #444", overflowWrap: "anywhere" } })), { style: { maxHeight: "55vh", overflowY: "auto" } });
-        view.input({ label: "Message", placeholder: "Up to 1000 characters", textarea: true, fieldRef: draft });
-        view.button({ label: "Send", onClick: send, loading: busy.get() });
-        view.input({ label: "Report a message", placeholder: "Message number", fieldRef: reportId });
-        view.button({ label: "Report", onClick: report });
+        items.push(view.div(messages.get().map(m => view.text("#" + m.id + " · " + m.name + " · " + m.createdAt + "\n" + m.text, { style: { whiteSpace: "pre-wrap", padding: "12px", borderBottom: "1px solid #444", overflowWrap: "anywhere" } })), { style: { maxHeight: "55vh", overflowY: "auto" } }));
+        items.push(view.input({ label: "Message", placeholder: "Up to 1000 characters", textarea: true, fieldRef: draft }));
+        items.push(view.button({ label: "Send", onClick: send, loading: busy.get() }));
+        items.push(view.input({ label: "Report a message", placeholder: "Message number", fieldRef: reportId }));
+        items.push(view.button({ label: "Report", onClick: report }));
       }
+      return view.div(items, { style: { padding: "16px", display: "flex", flexDirection: "column", gap: "12px" } });
     });
   });
 }
