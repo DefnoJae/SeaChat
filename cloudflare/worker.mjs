@@ -86,6 +86,16 @@ export default {
       const user = credential ? await statement('SELECT id,name,banned,color,avatar,avatar_version FROM users WHERE token=?', credentialHash).first() : null;
       if (!user) fail(401, 'Join the room first.');
       if (user.banned) fail(403, 'This account has been banned.');
+      if (request.method === 'POST' && url.pathname === '/presence') {
+        const data=await readBody(request);if(typeof data.open!=='boolean')fail(400,'Invalid presence state.');
+        const now=Date.now();
+        const result=await env.DB.batch([
+          statement('DELETE FROM presence WHERE seen_at<?',now-45000),
+          data.open?statement('INSERT INTO presence(user_id,seen_at) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET seen_at=excluded.seen_at',user.id,now):statement('DELETE FROM presence WHERE user_id=?',user.id),
+          statement('SELECT COUNT(*) AS count FROM presence p JOIN users u ON u.id=p.user_id WHERE u.banned=0 AND p.seen_at>=?',now-45000)
+        ]);
+        return reply(200,{activeCount:result[2].results[0].count});
+      }
       if (request.method === 'POST' && url.pathname === '/media') {
         if(env.MEDIA_ENABLED !== 'true') fail(503, 'Media is disabled.');
         await limit(env.WRITE_LIMIT, 'media:' + user.id);
@@ -149,24 +159,24 @@ export default {
       }
       if (request.method === 'POST' && url.pathname === '/messages') {
         const data = await readBody(request);
-        const { text, attachment } = messageContent(data, env.MEDIA_ENABLED === 'true');
+        const { text, attachment, spoiler } = messageContent(data, env.MEDIA_ENABLED === 'true');
         const replyToId = messageId(data.replyToId, true);
         if (replyToId !== null && !await statement('SELECT id FROM messages WHERE id=?', replyToId).first()) fail(404, 'Original message is no longer available.');
         await limit(env.WRITE_LIMIT, 'send:' + ip);
         const now = Date.now(), requestId = crypto.randomUUID(), createdAt = new Date(now).toISOString();
         // D1 batches are transactions: simultaneous sends cannot bypass the two-second limit.
         const results = await env.DB.batch([
-          statement(`INSERT INTO messages(request_id,user_id,name,text,created_at,reply_to_id,reply_to_user_id,attachment)
-            SELECT ?,id,name,?,?,?,(SELECT user_id FROM messages WHERE id=?),? FROM users
+          statement(`INSERT INTO messages(request_id,user_id,name,text,created_at,reply_to_id,reply_to_user_id,attachment,spoiler)
+            SELECT ?,id,name,?,?,?,(SELECT user_id FROM messages WHERE id=?),?,? FROM users
             WHERE id=? AND banned=0 AND last_sent_at<=? AND (? IS NULL OR EXISTS(SELECT 1 FROM messages WHERE id=?)) RETURNING id`,
-            requestId, text, createdAt, replyToId, replyToId, attachment ? JSON.stringify(attachment) : null, user.id, now - 2000, replyToId, replyToId),
+            requestId, text, createdAt, replyToId, replyToId, attachment ? JSON.stringify(attachment) : null, Number(spoiler), user.id, now - 2000, replyToId, replyToId),
           statement(`UPDATE users SET last_sent_at=? WHERE id=? AND EXISTS (SELECT 1 FROM messages WHERE request_id=?)`, now, user.id, requestId)
         ]);
         if (!results[0].results.length) {
           if (replyToId !== null && !await statement('SELECT id FROM messages WHERE id=?', replyToId).first()) fail(404, 'Original message is no longer available.');
           fail(429, 'Wait two seconds before sending again.');
         }
-        return reply(201, { id: results[0].results[0].id, userId: user.id, name: user.name, text, attachment, createdAt });
+        return reply(201, { id: results[0].results[0].id, userId: user.id, name: user.name, text, attachment, spoiler, createdAt });
       }
       if (request.method === 'POST' && /^\/messages\/\d+\/report$/.test(url.pathname)) {
         await limit(env.WRITE_LIMIT, 'report:' + user.id);

@@ -20,9 +20,10 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
   for (const [table, column, definition] of [
     ['users','color',"TEXT NOT NULL DEFAULT '#a78bfa'"], ['users','avatar',"TEXT NOT NULL DEFAULT ''"],
     ['users','avatar_version',"TEXT NOT NULL DEFAULT ''"], ['reports','reason',"TEXT NOT NULL DEFAULT 'Other'"], ['reports','details',"TEXT NOT NULL DEFAULT ''"],
-    ['messages','reply_to_id','INTEGER'], ['messages','reply_to_user_id','INTEGER'], ['messages','attachment','TEXT']
+    ['messages','reply_to_id','INTEGER'], ['messages','reply_to_user_id','INTEGER'], ['messages','attachment','TEXT'], ['messages','spoiler','INTEGER NOT NULL DEFAULT 0']
   ]) if (!db.prepare('PRAGMA table_info(' + table + ')').all().some(row => row.name === column)) db.exec('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + definition);
   db.exec('CREATE INDEX IF NOT EXISTS messages_by_reply_recipient ON messages(reply_to_user_id,id)');
+  db.exec('CREATE TABLE IF NOT EXISTS presence (user_id INTEGER PRIMARY KEY, seen_at INTEGER NOT NULL)');
   const limits = new Map();
   const hash = value => createHash('sha256').update(value).digest('hex');
   const reply = (res, status, data) => {
@@ -94,6 +95,14 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
       const user = credential ? db.prepare('SELECT id,name,banned,color,avatar,avatar_version FROM users WHERE token=?').get(hash(credential)) : null;
       if (!user) fail(401, 'Join the room first.');
       if (user.banned) fail(403, 'This account has been banned.');
+      if(req.method === 'POST' && url.pathname === '/presence'){
+        const data=await body(req);if(typeof data.open!=='boolean')fail(400,'Invalid presence state.');
+        const now=Date.now();
+        db.prepare('DELETE FROM presence WHERE seen_at<?').run(now-45000);
+        if(data.open)db.prepare('INSERT INTO presence(user_id,seen_at) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET seen_at=excluded.seen_at').run(user.id,now);
+        else db.prepare('DELETE FROM presence WHERE user_id=?').run(user.id);
+        return reply(res,200,{activeCount:db.prepare('SELECT COUNT(*) AS count FROM presence p JOIN users u ON u.id=p.user_id WHERE u.banned=0').get().count});
+      }
       if(req.method === 'POST' && url.pathname === '/media'){
         if(!mediaEnabled)fail(503,'Media is disabled.');
         throttle('media:'+user.id,20,60_000);
@@ -148,17 +157,17 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
       }
       if (req.method === 'POST' && url.pathname === '/messages') {
         const data = await body(req);
-        const { text, attachment } = messageContent(data, mediaEnabled);
+        const { text, attachment, spoiler } = messageContent(data, mediaEnabled);
         const replyToId = messageId(data.replyToId, true);
         const original = replyToId === null ? null : db.prepare('SELECT user_id FROM messages WHERE id=?').get(replyToId);
         if (replyToId !== null && !original) fail(404, 'Original message is no longer available.');
         throttle('send:' + user.id, 1, 2000);
         throttle('sendip:' + ip, 20, 60_000);
         const createdAt = new Date().toISOString();
-        const result = db.prepare('INSERT INTO messages(user_id,name,text,created_at,reply_to_id,reply_to_user_id,attachment) VALUES(?,?,?,?,?,?,?)').run(user.id, user.name, text, createdAt, replyToId, original?.user_id ?? null, attachment ? JSON.stringify(attachment) : null);
+        const result = db.prepare('INSERT INTO messages(user_id,name,text,created_at,reply_to_id,reply_to_user_id,attachment,spoiler) VALUES(?,?,?,?,?,?,?,?)').run(user.id, user.name, text, createdAt, replyToId, original?.user_id ?? null, attachment ? JSON.stringify(attachment) : null, Number(spoiler));
         db.prepare('DELETE FROM messages WHERE id NOT IN (SELECT id FROM messages ORDER BY id DESC LIMIT 1000)').run();
         db.prepare('DELETE FROM reports WHERE message_id NOT IN (SELECT id FROM messages)').run();
-        return reply(res, 201, { id: Number(result.lastInsertRowid), userId: user.id, name: user.name, text, attachment, createdAt });
+        return reply(res, 201, { id: Number(result.lastInsertRowid), userId: user.id, name: user.name, text, attachment, spoiler, createdAt });
       }
       if (req.method === 'POST' && /^\/messages\/\d+\/report$/.test(url.pathname)) {
         throttle('report:' + user.id, 10, 60_000);

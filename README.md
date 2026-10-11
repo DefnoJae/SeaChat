@@ -132,3 +132,7 @@ Open Profile settings → Notifications. Choose all messages (default for new se
 Seanime must keep running and its global notifications must be enabled. Native popup sound follows operating-system notification settings; separate sound/volume controls and click-to-message actions are unavailable in Seanime's plugin API. Use Send test notification to check your system setup.
 
 Notification permission is required from v0.7.1. After updating, grant the notification and storage permissions on SeaChat’s extension page and reload the plugin. Missing notification permission disables the native API even when Windows notifications are enabled. Alerts are suppressed only while the chat is focused and reading the latest messages; switching apps enables background alerts.
+
+From v0.8.0, use **Spoiler** in the composer to conceal message text and attachments. Your own spoilers remain readable but dimmed; other users click to reveal them. Quoted spoilers, message details, report selections, and desktop alerts avoid revealing hidden text. Everyone should update to v0.8.0 to get spoiler hiding; older extensions do not understand the new flag.
+
+The header shows how many registered users have chat open. Opening chat starts a heartbeat; closing removes that user immediately. Switching apps keeps them active while chat stays open. Disconnected or crashed clients expire after 45 seconds, and the displayed count refreshes every 10 seconds. Multiple panels using the same profile count as one user.

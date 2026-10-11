@@ -24,10 +24,10 @@ function init() {
       if(!incoming.length)return;
       const last=incoming[incoming.length-1];
       const summary=incoming.length>1?incoming.length+(prefs.mode==='replies'?' new replies to you':' new messages'):prefs.mode==='replies'?'Someone replied to you':'New SeaChat message';
-      const message=prefs.hideText?summary:summary+' — '+last.name+': '+String(last.caption||last.text|| (last.attachment?'Media attachment':'')).slice(0,180);
+      const message=(prefs.hideText||last.spoiler)?summary:summary+' — '+last.name+': '+String(last.caption||last.text|| (last.attachment?'Media attachment':'')).slice(0,180);
       try{ctx.notification.send(message);}catch(e){notice(new Error('Desktop notification could not be sent. Check Seanime and system notification settings.'));}
     }
-    const state = ctx.state({ joined: false, visible: false, busy: false, connected: false, profile: null, messages: [], unreadReplies: [], activity: null, openSequence: 0, initialTarget: null, contextId: null, jumpId: null, jumpSequence: 0, status: "", notice: "", noticeId: 0, success: "", successId: 0 });
+    const state = ctx.state({ activeCount: null, joined: false, visible: false, busy: false, connected: false, profile: null, messages: [], unreadReplies: [], activity: null, openSequence: 0, initialTarget: null, contextId: null, jumpId: null, jumpSequence: 0, status: "", notice: "", noticeId: 0, success: "", successId: 0 });
     function update(values) { state.set(Object.assign({}, state.get(), values)); }
     function serial(fn) { const result = queue.then(fn); queue = result.catch(() => {}); return result; }
     const panel = ctx.newWebview({ slot: "fixed", width: "460px", maxWidth: "max(1px, calc(100vw - 100px))", height: "min(640px, calc(100vh - 32px))", maxHeight: "calc(100vh - 32px)", style: "left:84px;top:50%;transform:translateY(-50%)", hidden: true, zIndex: 100, window: { draggable: false, frameless: true } });
@@ -80,8 +80,14 @@ function init() {
       return messages.map(m => Object.assign({}, m, { avatar: avatars.get(m.userId + ":" + m.avatarVersion) || "" },
         profile && m.userId === profile.userId ? { name: profile.name, color: profile.color, avatar: profile.avatar, avatarVersion: profile.avatarVersion } : {}));
     }
+    async function presence(open) {
+      if (!token || !identityReady) return;
+      try {const result=await request('/presence','POST',{open});if(mounted&&open)update({activeCount:result.activeCount});}
+      catch {if(mounted)update({activeCount:null});}
+    }
     async function refreshNow() {
       if (!token) return;
+      if(mounted)await presence(true);
       try {
         const result = await request("/messages?after=" + readCursor + (revision ? "&revision=" + encodeURIComponent(revision) : ""));
         if (result.messages) latestMessages = result.messages;
@@ -156,7 +162,7 @@ function init() {
       token = result.token; identityReady = false; $storage.set("sessionToken", token); revision = ""; latestMessages = []; await resumeNow();
     }));
     panel.channel.on("send", data => action("send", async () => {
-      await request("/messages", "POST", { text: data.text, attachment: data.attachment || null, replyToId: data.replyToId == null ? null : data.replyToId });
+      await request("/messages", "POST", { text: data.text, spoiler: data.spoiler === true, attachment: data.attachment || null, replyToId: data.replyToId == null ? null : data.replyToId });
       update({ contextId: null }); await refreshNow();
     }));
     panel.channel.on("profile", data => action("profile", async () => {
@@ -205,11 +211,11 @@ function init() {
       readCursor = data.messageId; $storage.set(readKey, readCursor);
       setActivity(await request("/activity?after=" + readCursor));
     }).catch(notice));
-    function close() { readingLatest=false; mounted = false; update({ visible: false }); panel.hide(); nextClosedPoll = Date.now(); }
+    function close() { readingLatest=false; mounted = false; update({ visible: false }); serial(()=>presence(mounted)); panel.hide(); nextClosedPoll = Date.now(); }
     panel.channel.on("close", close);
     tray.onClick(() => { if (mounted) close(); else { mounted = true; panel.show(); serial(resumeNow); } });
     panel.onMount(() => { if (mounted) serial(() => { if (!state.get().visible) return resumeNow(); }); else startPolling(); });
-    panel.onUnmount(() => { readingLatest=false; mounted = false; if (cancelPoll) cancelPoll(); cancelPoll = null; startPolling(); });
+    panel.onUnmount(() => { readingLatest=false; mounted = false; serial(()=>presence(mounted)); if (cancelPoll) cancelPoll(); cancelPoll = null; startPolling(); });
     panel.channel.on("media", async data => {
       if(!Number.isSafeInteger(data.requestId))return;
       try { const result=await request('/media','POST',{kind:data.kind,query:data.query,page:data.page,action:data.action,id:data.id});update({mediaResponse:{requestId:data.requestId,result}}); }
