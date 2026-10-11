@@ -1,3 +1,4 @@
+import { klipyRequest } from './klipy.mjs';
 import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
@@ -9,7 +10,7 @@ import { MESSAGE_SELECT, ACTIVITY_SELECT, messageRows, messageId, afterId } from
 
 import { messageContent } from './media.mjs';
 
-export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = process.env.ADMIN_TOKEN || '', mediaEnabled = process.env.MEDIA_ENABLED === 'true' } = {}) {
+export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = process.env.ADMIN_TOKEN || '', mediaEnabled = process.env.MEDIA_ENABLED === 'true', klipyKey = process.env.KLIPY_API_KEY || '' } = {}) {
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
   const db = new DatabaseSync(dbPath);
   db.exec(`PRAGMA journal_mode=WAL;
@@ -93,6 +94,11 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
       const user = credential ? db.prepare('SELECT id,name,banned,color,avatar,avatar_version FROM users WHERE token=?').get(hash(credential)) : null;
       if (!user) fail(401, 'Join the room first.');
       if (user.banned) fail(403, 'This account has been banned.');
+      if(req.method === 'POST' && url.pathname === '/media'){
+        if(!mediaEnabled)fail(503,'Media is disabled.');
+        throttle('media:'+user.id,20,60_000);
+        return reply(res,200,await klipyRequest(await body(req),user.id,klipyKey));
+      }
       if (['PATCH', 'DELETE'].includes(req.method) && /^\/messages\/\d+$/.test(url.pathname)) {
         const id = messageId(Number(url.pathname.split('/').pop()));
         const message = db.prepare('SELECT user_id,attachment FROM messages WHERE id=?').get(id);

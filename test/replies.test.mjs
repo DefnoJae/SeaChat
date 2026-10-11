@@ -21,7 +21,7 @@ for (const platform of ['Node', 'Cloudflare']) test(platform + ': replies, recip
   } else {
     const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
     const mf = new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'replies',
-      modules: ['cloudflare/worker.mjs', 'profile.mjs', 'messages.mjs', 'media.mjs'].map(file => ({ type: 'ESModule', path: fileURLToPath(new URL('../' + file, import.meta.url)) })),
+      modules: ['cloudflare/worker.mjs', 'profile.mjs', 'messages.mjs', 'media.mjs','klipy.mjs'].map(file => ({ type: 'ESModule', path: fileURLToPath(new URL('../' + file, import.meta.url)) })),
       compatibilityDate: config.compatibility_date, d1Databases: { DB: 'replies' }, bindings: { ADMIN_TOKEN: 'admin' },
       ratelimits: Object.fromEntries(config.ratelimits.map(({ name, ...binding }) => [name, binding]))
     }] }));

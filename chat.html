@@ -27,6 +27,8 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. -->
 (() => {
 const $=id=>document.getElementById(id), colors=['#a78bfa','#f472b6','#60a5fa','#34d399','#fbbf24','#fb923c','#22d3ee'];
 let chat={joined:false,messages:[],profile:null},selected=null,focusBefore=null,edit=null,previousNotice=0,lastMessages='',lastSuccessId=0,imageBusy=false,replyTarget=null,lastJump=0,highlightId=null,highlightTimer=null;
+let mediaRequestId=0;const mediaPending=new Map();
+function mediaRequest(data){return new Promise((resolve,reject)=>{const requestId=++mediaRequestId;const timer=setTimeout(()=>{mediaPending.delete(requestId);reject(Error('Media search timed out. Try again.'));},16000);mediaPending.set(requestId,{resolve,reject,timer});emit('media',{...data,requestId});});}
 const mediaConfig="__SEACHAT_MEDIA_CONFIG__";
 let readingInitialized=false,lastOpen=0,acknowledged=0,attachment=null,mediaQuery='',pickerGeneration=0,searchTimer=null,searchAbort=null;
 const joinForm=document.getElementById('join');
@@ -61,6 +63,7 @@ function drawAttachment(){
 }
 function registerShare(media){
  if(!mediaConfig.enabled)return;
+ if(mediaConfig.proxy){mediaRequest({kind:media.kind,action:'share',id:media.id,query:media.query||''}).catch(()=>{});return;}
  fetch('https://api.klipy.com/api/v1/'+encodeURIComponent(mediaConfig.appKey)+'/'+(media.kind==='gif'?'gifs':'stickers')+'/share/'+encodeURIComponent(media.id),{method:'POST',credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify({customer_id:'seachat-'+chat.profile.userId,q:media.query||''})}).catch(()=>{});
 }
 function openMediaPicker(){
@@ -69,7 +72,7 @@ function openMediaPicker(){
  const tabs=element('div','media-tabs'),input=element('input'),grid=element('div','media-grid'),status=element('div','media-status'),more=element('button','secondary','Load more');
  input.type='search';input.placeholder='Search GIFs';input.maxLength=100;input.setAttribute('aria-label','Search GIFs and stickers');status.setAttribute('role','status');more.hidden=true;
  const buttons=['gif','sticker'].map(value=>{const button=element('button','secondary',value==='gif'?'GIFs':'Stickers');button.setAttribute('role','tab');button.setAttribute('aria-selected',String(value===kind));button.onclick=()=>{kind=value;buttons.forEach((b,i)=>b.setAttribute('aria-selected',String(['gif','sticker'][i]===kind)));input.placeholder='Search '+(kind==='gif'?'GIFs':'stickers');page=1;clearTimeout(searchTimer);load(false);};return button;});
- tabs.setAttribute('role','tablist');tabs.append(...buttons);$('modal-body').append(tabs,input,status,grid,more,element('p','provider-credit','Powered by KLIPY'));
+ tabs.setAttribute('role','tablist');tabs.append(...buttons);$('modal-body').append(tabs,input,status,grid,more,element('p','provider-credit',mediaConfig.testRollout?'Powered by KLIPY · Test access: 100 requests/hour shared':'Powered by KLIPY'));
  let requestSequence=0;
  async function load(append){
   if(generation!==pickerGeneration)return;
@@ -77,7 +80,7 @@ function openMediaPicker(){
   query=input.value.trim();const url=new URL('https://api.klipy.com/api/v1/'+encodeURIComponent(mediaConfig.appKey)+'/'+(kind==='gif'?'gifs':'stickers')+'/'+(query?'search':'trending'));
   url.searchParams.set('page',String(page));url.searchParams.set('per_page','24');url.searchParams.set('content_filter','off');url.searchParams.set('customer_id','seachat-'+chat.profile.userId);url.searchParams.set('format_filter',kind==='gif'?'gif,webp,jpg':'webp,png,gif');if(query)url.searchParams.set('q',query);
   try{
-   const res=await fetch(url.href,{credentials:'omit',signal:searchAbort.signal});if(!res.ok)throw Error(res.status===429?'Search limit reached. Try again later.':'Media search is unavailable. Try again.');
+   const res=mediaConfig.proxy?{ok:true,json:()=>mediaRequest({kind,query,page})}:await fetch(url.href,{credentials:'omit',signal:searchAbort.signal});if(!res.ok)throw Error(res.status===429?'Search limit reached. Try again later.':'Media search is unavailable. Try again.');
    const data=await res.json();if(generation!==pickerGeneration||sequence!==requestSequence)return;
    if(data.result===false)throw Error('Media search is unavailable. Try again.');
    const items=data.data?.data||[];
@@ -132,6 +135,7 @@ function editMessage(){if(!selected||selected.userId!==chat.profile?.userId)retu
 function deleteMessage(){if(!selected||selected.userId!==chat.profile?.userId)return;const id=selected.id;openModal('Delete message?');$('modal-body').append(element('p','hint','This permanently deletes your message for everyone. It cannot be undone.'));actions(()=>{if(!chat.busy)emit('delete',{messageId:id});},'Delete permanently');}
 $('edit-action').onclick=editMessage;$('delete-action').onclick=deleteMessage;
 function apply(next){
+ const response=next.mediaResponse;if(response&&mediaPending.has(response.requestId)){const pending=mediaPending.get(response.requestId);mediaPending.delete(response.requestId);clearTimeout(pending.timer);response.error?pending.reject(Error(response.error)):pending.resolve(response.result);}
  const wasJoined=chat.joined;chat=next;if(chat.visible===false)readingInitialized=false;
  $('connection').classList.toggle('online',!!chat.connected);$('connection').setAttribute('aria-label',chat.connected?'Connected':'Disconnected');$('settings').hidden=!chat.joined;$('composer').hidden=!chat.joined;$('media-picker').hidden=!chat.joined||!mediaConfig.enabled;
  const unread=chat.unreadReplies||[];$('reply-notice').hidden=!unread.length;$('unread-jump').textContent='You were replied to · '+unread.length;$('context-nav').hidden=!chat.contextId;

@@ -12,7 +12,8 @@ test('Cloudflare runtime: shared D1 history, quiet polls, moderation, races, ret
       { type: 'ESModule', path: fileURLToPath(new URL('../cloudflare/worker.mjs', import.meta.url)) },
       { type: 'ESModule', path: fileURLToPath(new URL('../profile.mjs', import.meta.url)) },
       { type: 'ESModule', path: fileURLToPath(new URL('../messages.mjs', import.meta.url)) },
-      { type: 'ESModule', path: fileURLToPath(new URL('../media.mjs', import.meta.url)) }
+      { type: 'ESModule', path: fileURLToPath(new URL('../media.mjs', import.meta.url)) },
+      { type: 'ESModule', path: fileURLToPath(new URL('../klipy.mjs', import.meta.url)) }
     ],
     compatibilityDate: config.compatibility_date,
     d1Databases: { DB: 'seachat-test' },

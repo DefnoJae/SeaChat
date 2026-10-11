@@ -22,7 +22,7 @@ for(const platform of ['Node','Cloudflare']) test(platform+': activity snapshots
     dispatch=(path,opts)=>fetch('http://127.0.0.1:'+server.address().port+path,opts);
   }else{
     const config=JSON.parse(readFileSync(new URL('../wrangler.jsonc',import.meta.url),'utf8'));
-    const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'activity-media',modules:['cloudflare/worker.mjs','profile.mjs','messages.mjs','media.mjs'].map(f=>({type:'ESModule',path:fileURLToPath(new URL('../'+f,import.meta.url))})),compatibilityDate:config.compatibility_date,d1Databases:{DB:'activity-media'},bindings:{ADMIN_TOKEN:'admin',MEDIA_ENABLED:'true'},ratelimits:Object.fromEntries(config.ratelimits.map(({name,...value})=>[name,value]))}]}));
+    const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'activity-media',modules:['cloudflare/worker.mjs','profile.mjs','messages.mjs','media.mjs','klipy.mjs'].map(f=>({type:'ESModule',path:fileURLToPath(new URL('../'+f,import.meta.url))})),compatibilityDate:config.compatibility_date,d1Databases:{DB:'activity-media'},bindings:{ADMIN_TOKEN:'admin',MEDIA_ENABLED:'true'},ratelimits:Object.fromEntries(config.ratelimits.map(({name,...value})=>[name,value]))}]}));
     t.after(()=>mf.dispose());const db=await mf.getD1Database('DB');
     for(const name of ['0001_chat.sql','0002_profiles.sql','0003_replies.sql','0004_message_edits.sql','0005_media.sql']){const sql=readFileSync(new URL('../cloudflare/migrations/'+name,import.meta.url),'utf8');await db.batch(sql.split(/;\s*(?=CREATE|INSERT|PRAGMA|ALTER|UPDATE|$)/).filter(s=>s.trim()).map(s=>db.prepare(s)));}
     dispatch=(path,opts)=>mf.dispatchFetch('https://chat.example.com'+path,opts);

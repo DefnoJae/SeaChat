@@ -43,6 +43,9 @@ test('webview bridge restores sessions, saves profiles, reports and keeps lightw
   await handlers.get('delete')({ messageId: 2 });
   assert.ok(calls.some(c => c.method === 'DELETE' && c.url.endsWith('/messages/2')));
   assert.equal(current.success, 'delete');
+  await handlers.get('media')({requestId:42,kind:'gif',query:'hello',page:1});
+  assert.equal(current.mediaResponse.requestId,42);
+  assert.ok(calls.some(c=>c.url.endsWith('/media')&&JSON.parse(c.body).query==='hello'));
   handlers.get('close')();assert.equal(shown,false);assert.equal(cancelled,0);
   click(); await new Promise(resolve => setImmediate(resolve));
   assert.equal(intervals,1);assert.equal(calls.filter(c=>c.url.endsWith('/sessions')).length,1);

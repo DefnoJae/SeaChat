@@ -186,6 +186,11 @@ function init() {
     tray.onClick(() => { if (mounted) close(); else { mounted = true; panel.show(); serial(resumeNow); } });
     panel.onMount(() => { if (mounted) serial(() => { if (!state.get().visible) return resumeNow(); }); else startPolling(); });
     panel.onUnmount(() => { mounted = false; if (cancelPoll) cancelPoll(); cancelPoll = null; });
+    panel.channel.on("media", async data => {
+      if(!Number.isSafeInteger(data.requestId))return;
+      try { const result=await request('/media','POST',{kind:data.kind,query:data.query,page:data.page,action:data.action,id:data.id});update({mediaResponse:{requestId:data.requestId,result}}); }
+      catch(e){update({mediaResponse:{requestId:data.requestId,error:String(e.message)}});}
+    });
     panel.channel.on("ready", () => update({}));
     startPolling();
   });

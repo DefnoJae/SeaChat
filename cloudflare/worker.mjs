@@ -1,3 +1,4 @@
+import { klipyRequest } from '../klipy.mjs';
 import { COLORS, validateProfile, validateReport } from '../profile.mjs';
 import { MESSAGE_SELECT, ACTIVITY_SELECT, messageRows, messageId, afterId } from '../messages.mjs';
 import { messageContent } from '../media.mjs';
@@ -85,6 +86,11 @@ export default {
       const user = credential ? await statement('SELECT id,name,banned,color,avatar,avatar_version FROM users WHERE token=?', credentialHash).first() : null;
       if (!user) fail(401, 'Join the room first.');
       if (user.banned) fail(403, 'This account has been banned.');
+      if (request.method === 'POST' && url.pathname === '/media') {
+        if(env.MEDIA_ENABLED !== 'true') fail(503, 'Media is disabled.');
+        await limit(env.WRITE_LIMIT, 'media:' + user.id);
+        return reply(200, await klipyRequest(await readBody(request), user.id, env.KLIPY_API_KEY));
+      }
       if (['PATCH', 'DELETE'].includes(request.method) && /^\/messages\/\d+$/.test(url.pathname)) {
         const id = messageId(Number(url.pathname.split('/').pop()));
         const message = await statement('SELECT user_id,attachment FROM messages WHERE id=?', id).first();
