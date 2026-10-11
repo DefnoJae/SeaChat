@@ -59,7 +59,7 @@ function mediaElement(media,preview=false){
 function drawAttachment(){
  const box=$('attachment-preview');box.replaceChildren();box.hidden=!attachment;if(!attachment)return;
  const remove=element('button','icon','✕');remove.type='button';remove.setAttribute('aria-label','Remove attachment');remove.onclick=()=>{attachment=null;drawAttachment();};
- box.append(mediaElement(attachment,true),element('span','reply-summary',attachment.title||'KLIPY '+attachment.kind),remove);
+ box.append(mediaElement(attachment),element('span','reply-summary',attachment.title||'KLIPY '+attachment.kind),remove);
 }
 function registerShare(media){
  if(!mediaConfig.enabled)return;
@@ -89,7 +89,7 @@ function openMediaPicker(){
     const tile=element('button');tile.setAttribute('aria-label','Select '+(item.title||kind));
     if(!image||!mediaUrl(image.url)||!thumb||!mediaUrl(thumb.url)){tile.disabled=true;tile.textContent='Unavailable';grid.append(tile);continue;}
     const media={provider:'klipy',kind,id:item.slug,title:String(item.title||'').slice(0,200),url:image.url,previewUrl:thumb.url,width:image.width,height:image.height,query};
-    const img=element('img');img.src=thumb.url;img.alt=item.title||kind;img.loading='lazy';img.referrerPolicy='no-referrer';img.onerror=()=>{tile.disabled=true;tile.replaceChildren(element('span','hint','Unavailable'));};tile.append(img);
+    const img=element('img');img.src=image.url;img.alt=item.title||kind;img.loading='lazy';img.referrerPolicy='no-referrer';img.onerror=()=>{tile.disabled=true;tile.replaceChildren(element('span','hint','Unavailable'));};tile.append(img);
     tile.onclick=()=>{attachment=media;drawAttachment();closeModal();$('draft').focus();};grid.append(tile);
    }
    status.textContent=grid.children.length?'':'No results. Try another search.';more.hidden=!data.data?.has_next;
