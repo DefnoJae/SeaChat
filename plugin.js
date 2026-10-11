@@ -7,6 +7,26 @@ function init() {
     let queue = Promise.resolve(), latestMessages = [], replyCursor = 0, cursorKey = "";
     let readCursor = 0, readKey = "", firstVisit = false, identityReady = false, nextClosedPoll = 0, failures = 0;
     const avatars = new Map();
+    let notificationKey='', notificationCursor=0, readingLatest=false;
+    let notificationSettings={mode:'replies',desktop:true,hideText:true,muteUntil:0};
+    function cleanNotifications(value){value=value||{};return {mode:['replies','all','off'].includes(value.mode)?value.mode:'replies',desktop:value.desktop!==false,hideText:value.hideText!==false,muteUntil:Number.isFinite(value.muteUntil)&&value.muteUntil>0?value.muteUntil:0};}
+    async function checkNotifications(activity, messages){
+      if(!activity||!identityReady)return;
+      const before=notificationCursor;
+      if(activity.latestId<=before)return;
+      const prefs=notificationSettings;
+      if(!prefs.desktop||prefs.mode==='off'||Date.now()<prefs.muteUntil||!ctx.notification||typeof ctx.notification.send!=='function'||(mounted&&readingLatest)){
+        notificationCursor=activity.latestId;return;
+      }
+      const rows=messages||(await request('/messages')).messages||[];
+      const incoming=rows.filter(m=>m.id>before&&m.id<=activity.latestId&&m.userId!==state.get().profile.userId&&(prefs.mode==='all'||m.reply&&m.reply.userId===state.get().profile.userId));
+      notificationCursor=activity.latestId;
+      if(!incoming.length)return;
+      const last=incoming[incoming.length-1];
+      const summary=incoming.length>1?incoming.length+(prefs.mode==='replies'?' new replies to you':' new messages'):prefs.mode==='replies'?'Someone replied to you':'New SeaChat message';
+      const message=prefs.hideText?summary:summary+' — '+last.name+': '+String(last.caption||last.text|| (last.attachment?'Media attachment':'')).slice(0,180);
+      try{ctx.notification.send(message);}catch(e){notice(new Error('Desktop notification could not be sent. Check Seanime and system notification settings.'));}
+    }
     const state = ctx.state({ joined: false, visible: false, busy: false, connected: false, profile: null, messages: [], unreadReplies: [], activity: null, openSequence: 0, initialTarget: null, contextId: null, jumpId: null, jumpSequence: 0, status: "", notice: "", noticeId: 0, success: "", successId: 0 });
     function update(values) { state.set(Object.assign({}, state.get(), values)); }
     function serial(fn) { const result = queue.then(fn); queue = result.catch(() => {}); return result; }
@@ -31,7 +51,10 @@ function init() {
       }
       identityReady = true;
       if (profile.avatarVersion) avatars.set(profile.userId + ":" + profile.avatarVersion, profile.avatar);
-      update({ joined: true, profile });
+      notificationKey='notifications:'+base+':'+profile.userId;
+      notificationSettings=cleanNotifications($storage.get(notificationKey));
+      notificationCursor=(await request('/activity?after=0')).latestId;
+      update({ joined: true, profile, notificationSettings, notificationsSupported:!!ctx.notification&&typeof ctx.notification.send==='function' });
     }
     panel.channel.sync("chat", state);
     panel.setContent(() => content);
@@ -63,6 +86,7 @@ function init() {
         const result = await request("/messages?after=" + readCursor + (revision ? "&revision=" + encodeURIComponent(revision) : ""));
         if (result.messages) latestMessages = result.messages;
         revision = result.revision || "";
+        await checkNotifications(result.activity,latestMessages);
         setActivity(result.activity);
         if (!mounted) return;
         let visible = latestMessages;
@@ -110,7 +134,7 @@ function init() {
         return serial(async () => {
           try {
             if (!identityReady) await prepareIdentity();
-            setActivity(await request("/activity?after=" + readCursor)); failures = 0;
+            const activity=await request('/activity?after='+readCursor);await checkNotifications(activity);setActivity(activity); failures=0;
           } catch (e) {
             failures++;
             if (e.status === 401 || e.status === 403) { token = ""; identityReady = false; tray.updateBadge({ number: 0 }); if (cancelPoll) cancelPoll(); cancelPoll = null; }
@@ -181,16 +205,19 @@ function init() {
       readCursor = data.messageId; $storage.set(readKey, readCursor);
       setActivity(await request("/activity?after=" + readCursor));
     }).catch(notice));
-    function close() { mounted = false; update({ visible: false }); panel.hide(); nextClosedPoll = Date.now(); }
+    function close() { readingLatest=false; mounted = false; update({ visible: false }); panel.hide(); nextClosedPoll = Date.now(); }
     panel.channel.on("close", close);
     tray.onClick(() => { if (mounted) close(); else { mounted = true; panel.show(); serial(resumeNow); } });
     panel.onMount(() => { if (mounted) serial(() => { if (!state.get().visible) return resumeNow(); }); else startPolling(); });
-    panel.onUnmount(() => { mounted = false; if (cancelPoll) cancelPoll(); cancelPoll = null; });
+    panel.onUnmount(() => { readingLatest=false; mounted = false; if (cancelPoll) cancelPoll(); cancelPoll = null; startPolling(); });
     panel.channel.on("media", async data => {
       if(!Number.isSafeInteger(data.requestId))return;
       try { const result=await request('/media','POST',{kind:data.kind,query:data.query,page:data.page,action:data.action,id:data.id});update({mediaResponse:{requestId:data.requestId,result}}); }
       catch(e){update({mediaResponse:{requestId:data.requestId,error:String(e.message)}});}
     });
+    panel.channel.on('reading',data=>{readingLatest=!!data.latest;});
+    panel.channel.on('notificationSettings',data=>{if(!notificationKey)return;notificationSettings=cleanNotifications(data);$storage.set(notificationKey,notificationSettings);update({notificationSettings});});
+    panel.channel.on('testNotification',()=>{if(ctx.notification&&typeof ctx.notification.send==='function'){try{ctx.notification.send('SeaChat notifications are enabled. Sound follows your system notification settings.');}catch(e){notice(new Error('Unable to send a desktop notification.'));}}else notice(new Error('Desktop notifications are unavailable in this Seanime client.'));});
     panel.channel.on("ready", () => update({}));
     startPolling();
   });

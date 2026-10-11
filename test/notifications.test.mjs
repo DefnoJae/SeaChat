@@ -1,0 +1,18 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+test('desktop notifications group replies, hide text, skip self and history, respect mute and active reading',async()=>{
+ const storage=new Map([['sessionToken','token']]),handlers=new Map(),alerts=[];let tick,click,state,now=0,rows=[{id:1,userId:2,name:'Bob',text:'old'}];
+ const activity=()=>({latestId:rows.at(-1).id,unreadCount:0,oldestUnreadId:null});
+ const ctx={notification:{send:m=>alerts.push(m)},state:s=>{state=s;return{get:()=>state,set:s=>state=s};},newTray:()=>({onClick:f=>click=f,updateBadge:()=>{}}),newWebview:()=>({channel:{sync:()=>{},on:(n,f)=>handlers.set(n,f)},setContent:()=>{},show:()=>{},hide:()=>{},onMount:()=>{},onUnmount:()=>{}}),setInterval:f=>{tick=f;return()=>{};},fetch:async url=>{const path=new URL(url).pathname;const data=path==='/profile'?{userId:1,name:'Alice',avatar:''}:path==='/activity'?activity():path==='/replies'?{replies:[]}: {messages:rows,activity:activity(),revision:'r'};return{ok:true,json:()=>data};}};
+ const sandbox={$ui:{register:f=>f(ctx)},$storage:{get:k=>storage.get(k),set:(k,v)=>storage.set(k,v)},Date:{now:()=>now}};vm.runInNewContext(readFileSync(new URL('../plugin.js',import.meta.url),'utf8'),sandbox);sandbox.init();
+ await tick();assert.equal(alerts.length,0,'baseline does not notify old messages');
+ rows.push({id:2,userId:2,name:'Bob',text:'private',reply:{userId:1}},{id:3,userId:3,name:'Carol',text:'secret',reply:{userId:1}},{id:4,userId:1,text:'self',reply:{userId:1}});now=30000;await tick();assert.equal(alerts[0],'2 new replies to you');
+ now=60000;await tick();assert.equal(alerts.length,1,'no repeat alerts');
+ handlers.get('notificationSettings')({mode:'all',desktop:true,hideText:false,muteUntil:90001});rows.push({id:5,userId:2,name:'Bob',text:'muted'});now=90000;await tick();assert.equal(alerts.length,1);
+ rows.push({id:6,userId:2,name:'Bob',text:'hello'});now=120000;await tick();assert.match(alerts[1],/Bob: hello/);
+ click();for(let i=0;i<50&&!state.visible;i++)await new Promise(r=>setImmediate(r));handlers.get('reading')({latest:true});rows.push({id:7,userId:2,name:'Bob',text:'visible'});now=130000;await tick();assert.equal(alerts.length,2);
+ handlers.get('reading')({latest:false});rows.push({id:8,userId:2,name:'Bob',text:'older reading'});now=140000;await tick();assert.equal(alerts.length,3);
+ handlers.get('notificationSettings')({mode:'off'});rows.push({id:9,userId:2,name:'Bob',text:'off'});now=150000;await tick();assert.equal(alerts.length,3);assert.equal(storage.get('notifications:http://127.0.0.1:8787:1').mode,'off');
+});

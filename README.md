@@ -124,3 +124,9 @@ Before enabling publicly: confirm free production terms, ads disabled, provider 
 ### Private KLIPY test build
 
 Save your test key in a file outside the repository, then run `node build.mjs --media-preview PATH_TO_KEY_FILE`. This writes only `dist/seachat-media-preview.json` (ignored by Git), uses the local backend at `http://127.0.0.1:8787`, and leaves the public manifest and configuration unchanged. Run the optional Node backend with `MEDIA_ENABLED=true` for attachment testing. The test key is embedded in this private preview, so do not upload or distribute that file. Normal `npm run build` requires either confirmed production access or an explicit `testRollout: true` setting before enabling public media. Test keys are limited to 100 API requests per hour.
+
+### Notifications (v0.7.0)
+
+Open Profile settings → Notifications. Choose replies only (default), all messages, or off; enable desktop popups, hide message text (default), and mute for an hour, until tomorrow, or indefinitely. Settings are stored locally per server and session. Incoming messages are grouped per poll, self-messages are excluded, and alerts are suppressed while actively reading the latest messages. Existing history and messages received while Seanime was stopped do not trigger startup alerts. The tray unread count remains independent. Closed chat checks every 30 seconds; when notifications are enabled, new activity also fetches the latest retained history for alert details.
+
+Seanime must keep running and its global notifications must be enabled. Native popup sound follows operating-system notification settings; separate sound/volume controls and click-to-message actions are unavailable in Seanime's plugin API. Use Send test notification to check your system setup.
