@@ -8,8 +8,8 @@ function init() {
     let readCursor = 0, readKey = "", firstVisit = false, identityReady = false, nextClosedPoll = 0, failures = 0;
     const avatars = new Map();
     let notificationKey='', notificationCursor=0, readingLatest=false;
-    let notificationSettings={mode:'replies',desktop:true,hideText:true,muteUntil:0};
-    function cleanNotifications(value){value=value||{};return {mode:['replies','all','off'].includes(value.mode)?value.mode:'replies',desktop:value.desktop!==false,hideText:value.hideText!==false,muteUntil:Number.isFinite(value.muteUntil)&&value.muteUntil>0?value.muteUntil:0};}
+    let notificationSettings={mode:'all',desktop:true,hideText:true,muteUntil:0};
+    function cleanNotifications(value){value=value||{};return {mode:['replies','all','off'].includes(value.mode)?value.mode:'all',desktop:value.desktop!==false,hideText:value.hideText!==false,muteUntil:Number.isFinite(value.muteUntil)&&value.muteUntil>0?value.muteUntil:0};}
     async function checkNotifications(activity, messages){
       if(!activity||!identityReady)return;
       const before=notificationCursor;
@@ -138,7 +138,7 @@ function init() {
           } catch (e) {
             failures++;
             if (e.status === 401 || e.status === 403) { token = ""; identityReady = false; tray.updateBadge({ number: 0 }); if (cancelPoll) cancelPoll(); cancelPoll = null; }
-          } finally { nextClosedPoll = Date.now() + Math.min(300000, 30000 * Math.pow(2, failures)); }
+          } finally { nextClosedPoll = Date.now() + Math.min(300000, (ctx.notification&&notificationSettings.desktop&&notificationSettings.mode!=='off'?10000:30000) * Math.pow(2, failures)); }
         }).finally(() => { pollPending = false; });
       }, 10000);
     }
