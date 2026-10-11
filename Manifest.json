@@ -23,7 +23,7 @@
       "allow": {
         "networkAccess": {
           "allowedDomains": [
-            "seachat.seachat-defnojae.workers.dev"
+            "seachat-backend-eahvf.faable.link"
           ],
           "reasoning": "Connect to the shared global chat server to send messages, update profiles and report messages."
         }
