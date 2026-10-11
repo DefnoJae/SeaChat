@@ -14,7 +14,10 @@ test('desktop notifications group replies, hide text, skip self and history, res
  handlers.get('notificationSettings')({mode:'all',desktop:true,hideText:false,muteUntil:90001});rows.push({id:5,userId:2,name:'Bob',text:'muted'});now=90000;await tick();assert.equal(alerts.length,1);
  rows.push({id:6,userId:2,name:'Bob',text:'hello'});now=120000;await tick();assert.match(alerts[1],/Bob: hello/);
  click();for(let i=0;i<50&&!state.visible;i++)await new Promise(r=>setImmediate(r));handlers.get('reading')({latest:true});rows.push({id:7,userId:2,name:'Bob',text:'visible'});now=130000;await tick();assert.equal(alerts.length,2);
- handlers.get('reading')({latest:false});rows.push({id:8,userId:2,name:'Bob',text:'older reading'});now=140000;await tick();assert.equal(alerts.length,3);
- rows.push({id:9,userId:2,name:'Bob',text:'secret spoiler',spoiler:true});now=150000;await tick();assert.equal(alerts.at(-1),'New SeaChat message');assert.equal(alerts.length,4);
- handlers.get('notificationSettings')({mode:'off'});rows.push({id:10,userId:2,name:'Bob',text:'off'});now=160000;await tick();assert.equal(alerts.length,4);assert.equal(storage.get('notifications:http://127.0.0.1:8787:1').mode,'off');
+ handlers.get('reading')({latest:false});rows.push({id:8,userId:2,name:'Bob',text:'older reading'});now=140000;await tick();assert.equal(alerts.length,2,'open chat remains quiet even without iframe focus');
+ handlers.get('notificationSettings')({mode:'all',desktop:true,hideText:false,pauseWhileOpen:false});
+ rows.push({id:9,userId:2,name:'Bob',text:'secret spoiler',spoiler:true});now=150000;await tick();assert.equal(alerts.at(-1),'New SeaChat message');assert.equal(alerts.length,3,'users can opt into background alerts while open');
+ handlers.get('notificationSettings')({mode:'all',pauseWhileOpen:true});handlers.get('close')();
+ rows.push({id:10,userId:2,name:'Bob',text:'closed chat'});now=160000;await tick();assert.equal(alerts.length,4,'closing chat restores notifications');
+ handlers.get('notificationSettings')({mode:'off'});rows.push({id:11,userId:2,name:'Bob',text:'off'});now=170000;await tick();assert.equal(alerts.length,4);assert.equal(storage.get('notifications:http://127.0.0.1:8787:1').mode,'off');
 });

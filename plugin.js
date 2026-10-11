@@ -8,20 +8,22 @@ function init() {
     let readCursor = 0, readKey = "", firstVisit = false, identityReady = false, nextClosedPoll = 0, failures = 0;
     const avatars = new Map();
     let notificationKey='', notificationCursor=0, readingLatest=false;
-    let notificationSettings={mode:'all',desktop:true,hideText:true,muteUntil:0};
-    function cleanNotifications(value){value=value||{};return {mode:['replies','all','off'].includes(value.mode)?value.mode:'all',desktop:value.desktop!==false,hideText:value.hideText!==false,muteUntil:Number.isFinite(value.muteUntil)&&value.muteUntil>0?value.muteUntil:0};}
+    let notificationSettings={mode:'all',desktop:true,hideText:true,pauseWhileOpen:true,muteUntil:0};
+    function cleanNotifications(value){value=value||{};return {mode:['replies','all','off'].includes(value.mode)?value.mode:'all',desktop:value.desktop!==false,hideText:value.hideText!==false,pauseWhileOpen:value.pauseWhileOpen!==false,muteUntil:Number.isFinite(value.muteUntil)&&value.muteUntil>0?value.muteUntil:0};}
+    function alertsPaused(){const prefs=notificationSettings;return !prefs.desktop||prefs.mode==='off'||Date.now()<prefs.muteUntil||(mounted&&(prefs.pauseWhileOpen||readingLatest));}
     async function checkNotifications(activity, messages){
       if(!activity||!identityReady)return;
       const before=notificationCursor;
       if(activity.latestId<=before)return;
-      const prefs=notificationSettings;
-      if(!prefs.desktop||prefs.mode==='off'||Date.now()<prefs.muteUntil||!ctx.notification||typeof ctx.notification.send!=='function'||(mounted&&readingLatest)){
+      if(alertsPaused()||!ctx.notification||typeof ctx.notification.send!=='function'){
         notificationCursor=activity.latestId;return;
       }
       const rows=messages||(await request('/messages')).messages||[];
+      const prefs=notificationSettings;
       const incoming=rows.filter(m=>m.id>before&&m.id<=activity.latestId&&m.userId!==state.get().profile.userId&&(prefs.mode==='all'||m.reply&&m.reply.userId===state.get().profile.userId));
       notificationCursor=activity.latestId;
-      if(!incoming.length)return;
+      // Opening chat or muting while the history request is in flight must also suppress its alert.
+      if(!incoming.length||alertsPaused())return;
       const last=incoming[incoming.length-1];
       const summary=incoming.length>1?incoming.length+(prefs.mode==='replies'?' new replies to you':' new messages'):prefs.mode==='replies'?'Someone replied to you':'New SeaChat message';
       const message=(prefs.hideText||last.spoiler)?summary:summary+' — '+last.name+': '+String(last.caption||last.text|| (last.attachment?'Media attachment':'')).slice(0,180);
