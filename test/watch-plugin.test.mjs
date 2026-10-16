@@ -29,4 +29,10 @@ test('watch sharing is opt-in, selects latest recorded anime, retries titles and
  assert.deepEqual(uploads.at(-1),{shared:true,automatic:true,mediaId:21,title:'One Piece'});
  await handlers.get('watchSharing')({shared:false});assert.equal(state.profile.watchBadge,null);
  const before=historyCalls;now+=31000;await tick();assert.equal(historyCalls,before,'hiding stops history access');
+ // Native Go timestamps stringify to a Go-formatted date, but JSON marshals
+ // them to RFC3339. Reproduce that distinction without exposing file paths.
+ history={21:{mediaId:21,timeUpdated:{toString:()=> '2026-10-16 12:00:00 -0500 -05',toJSON:()=> '2026-10-16T12:00:00-05:00'}}};
+ failTitle=true;ctx.anime.getAnimeMetadata=async()=>({titles:{'en-jp':'One Piece'}});
+ now+=31000;await handlers.get('watchSharing')({shared:true});
+ assert.equal(state.profile.watchBadge.title,'One Piece','native timestamps and metadata work without library access');
 });

@@ -8,7 +8,7 @@ function init() {
     let readCursor = 0, readKey = "", firstVisit = false, identityReady = false, nextClosedPoll = 0, failures = 0;
     const avatars = new Map();
     let nextWatchCheck = 0;
-    const watchSupported = !!ctx.continuity && typeof ctx.continuity.getWatchHistory === 'function' && !!ctx.anime && typeof ctx.anime.getAnimeEntry === 'function';
+    const watchSupported = !!ctx.continuity && typeof ctx.continuity.getWatchHistory === 'function' && !!ctx.anime && (typeof ctx.anime.getAnimeMetadata === 'function' || typeof ctx.anime.getAnimeEntry === 'function');
     let notificationKey='', notificationCursor=0, readingLatest=false;
     let notificationSettings={mode:'all',desktop:true,hideText:true,pauseWhileOpen:true,muteUntil:0};
     function cleanNotifications(value){value=value||{};return {mode:['replies','all','off'].includes(value.mode)?value.mode:'all',desktop:value.desktop!==false,hideText:value.hideText!==false,pauseWhileOpen:value.pauseWhileOpen!==false,muteUntil:Number.isFinite(value.muteUntil)&&value.muteUntil>0?value.muteUntil:0};}
@@ -80,19 +80,30 @@ function init() {
       if(!profile || !profile.watchSharing || (!force && Date.now()<nextWatchCheck))return;
       nextWatchCheck=Date.now()+30000;
       if(!watchSupported){update({watchStatus:'Watch history is unavailable in this Seanime client. You can still hide an existing badge.'});return;}
+      let stage='read watch history';
       try {
-        const history=await ctx.continuity.getWatchHistory();
-        const items=Object.values(history||{}).filter(item=>Number.isSafeInteger(item.mediaId)&&item.mediaId>0)
-          .map(item=>({item,time:Date.parse(item.timeUpdated||item.timeAdded||'')})).filter(row=>Number.isFinite(row.time)).sort((a,b)=>b.time-a.time);
+        // Goja exposes time.Time values as native Go objects. JSON uses their
+        // RFC3339 representation; Date.parse(nativeTime) cannot parse them.
+        const history=JSON.parse(JSON.stringify(ctx.continuity.getWatchHistory()||{}));
+        const items=Object.values(history||{}).filter(item=>item&&Number.isSafeInteger(item.mediaId)&&item.mediaId>0)
+          .map(item=>({item,time:Date.parse(item.timeUpdated)||Date.parse(item.timeAdded||'')})).filter(row=>Number.isFinite(row.time)).sort((a,b)=>b.time-a.time);
         if(!items.length){update({watchStatus:'No recorded anime yet. The badge will appear after Seanime records your watching progress.'});return;}
         const mediaId=items[0].item.mediaId;
         if(profile.watchBadge && profile.watchBadge.mediaId===mediaId){update({watchStatus:''});return;}
-        const entry=await ctx.anime.getAnimeEntry(mediaId),titles=entry&&entry.media&&entry.media.title;
-        const title=titles&&(titles.userPreferred||titles.english||titles.romaji||titles.native);
+        stage='find the anime title';
+        let title='';
+        // Metadata lookup does not require the anime to be in the user's collection.
+        if(typeof ctx.anime.getAnimeMetadata==='function'){
+          try{const metadata=await ctx.anime.getAnimeMetadata('anilist',mediaId);const titles=metadata&&(metadata.titles||metadata.Titles);if(titles){const plain=JSON.parse(JSON.stringify(titles));title=plain.english||plain.en||plain.romaji||plain['en-jp']||plain['ja-ro']||Object.values(plain).find(value=>typeof value==='string'&&value.trim())||'';}}catch{}
+        }
+        if(!title&&typeof ctx.anime.getAnimeEntry==='function'){
+          try{const entry=await ctx.anime.getAnimeEntry(mediaId),media=entry&&(entry.media||entry.Media),titles=media&&(media.title||media.Title);title=titles&&(titles.userPreferred||titles.english||titles.romaji||titles.native||titles.UserPreferred||titles.English||titles.Romaji||titles.Native)||'';}catch{}
+        }
         if(typeof title!=='string'||!title.trim())throw new Error('Anime title unavailable');
+        stage='save the badge';
         const result=await request('/watch-badge','PUT',{shared:true,automatic:true,mediaId,title:title.trim().slice(0,240)});
         applyWatchProfile(result);update({watchStatus:''});
-      }catch(e){update({watchStatus:'Could not update your watching badge. SeaChat will retry automatically.'});}
+      }catch(e){update({watchStatus:'Could not '+stage+'. SeaChat will retry automatically.'});}
     }
     async function hydrate(messages) {
       const unique = new Map();
