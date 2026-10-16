@@ -1,5 +1,5 @@
 import { klipyRequest } from '../klipy.mjs';
-import { COLORS, validateProfile, validateReport } from '../profile.mjs';
+import { COLORS, validateProfile, validateReport, validateWatchBadge, watchProfile, watchColor } from '../profile.mjs';
 import { MESSAGE_SELECT, ACTIVITY_SELECT, messageRows, messageId, afterId } from '../messages.mjs';
 import { messageContent } from '../media.mjs';
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
@@ -83,9 +83,19 @@ export default {
         const result = await statement('INSERT INTO users(token,name,color) VALUES(?,?,?) RETURNING id', await hash(token), name, color).first();
         return reply(201, { token, userId: result.id, name });
       }
-      const user = credential ? await statement('SELECT id,name,banned,color,avatar,avatar_version FROM users WHERE token=?', credentialHash).first() : null;
+      const user = credential ? await statement('SELECT id,name,banned,color,avatar,avatar_version,watch_shared,watch_media_id,watch_title,watch_color FROM users WHERE token=?', credentialHash).first() : null;
       if (!user) fail(401, 'Join the room first.');
       if (user.banned) fail(403, 'This account has been banned.');
+      if (request.method === 'PUT' && url.pathname === '/watch-badge') {
+        await limit(env.WRITE_LIMIT,'watch-badge:'+user.id);
+        const badge=validateWatchBadge(await readBody(request));
+        const color=watchColor(user.watch_color,()=>crypto.getRandomValues(new Uint8Array(1))[0]/256);
+        await env.DB.batch([
+          statement('UPDATE users SET watch_shared=?,watch_color=CASE WHEN ? IS NOT NULL AND (watch_media_id IS NULL OR watch_media_id<>?) THEN ? ELSE watch_color END,watch_media_id=COALESCE(?,watch_media_id),watch_title=COALESCE(?,watch_title) WHERE id=? AND banned=0 AND (?=0 OR watch_shared=1)',Number(badge.shared),badge.mediaId,badge.mediaId,color,badge.mediaId,badge.title,user.id,Number(badge.automatic||false)),
+          statement('UPDATE room SET revision=lower(hex(randomblob(16))) WHERE id=1')
+        ]);
+        return reply(200,watchProfile(await statement('SELECT watch_shared,watch_media_id,watch_title,watch_color FROM users WHERE id=?',user.id).first()));
+      }
       if (request.method === 'POST' && url.pathname === '/presence') {
         const data=await readBody(request);if(typeof data.open!=='boolean')fail(400,'Invalid presence state.');
         const now=Date.now();
@@ -134,7 +144,7 @@ export default {
         if (!result.results.some(m => m.id === id)) fail(404, 'Message is no longer available.');
         return reply(200, { messages: messageRows(result.results), targetId: id });
       }
-      if (request.method === 'GET' && url.pathname === '/profile') return reply(200, { userId: user.id, name: user.name, color: user.color, avatar: user.avatar, avatarVersion: user.avatar_version });
+      if (request.method === 'GET' && url.pathname === '/profile') return reply(200, { userId: user.id, name: user.name, color: user.color, avatar: user.avatar, avatarVersion: user.avatar_version, ...watchProfile(user) });
       if (request.method === 'PUT' && url.pathname === '/profile') {
         await limit(env.WRITE_LIMIT, 'profile:' + user.id);
         const profile = validateProfile(await readBody(request, 36000));
@@ -143,7 +153,7 @@ export default {
           statement('UPDATE users SET name=?,color=?,avatar=?,avatar_version=? WHERE id=? AND banned=0', profile.name, profile.color, profile.avatar, version, user.id),
           statement('UPDATE room SET revision=lower(hex(randomblob(16))) WHERE id=1')
         ]);
-        return reply(200, { userId: user.id, ...profile, avatarVersion: version });
+        return reply(200, { userId: user.id, ...profile, avatarVersion: version, ...watchProfile(user) });
       }
       if (request.method === 'GET' && /^\/avatars\/\d+$/.test(url.pathname)) {
         const profile = await statement('SELECT avatar,avatar_version FROM users WHERE id=? AND banned=0', Number(url.pathname.split('/').pop())).first();

@@ -1,5 +1,23 @@
 export const COLORS = ['#a78bfa', '#f472b6', '#60a5fa', '#34d399', '#fbbf24', '#fb923c', '#22d3ee'];
 export const REASONS = ['Spam', 'Harassment', 'Spoilers', 'Other'];
+export function validateWatchBadge(data) {
+  if (typeof data.shared !== 'boolean') reject('Choose whether to share your watch badge.');
+  if (data.automatic != null && typeof data.automatic !== 'boolean') reject('Invalid watch update.');
+  const automatic = data.automatic === true;
+  if (automatic && (!data.shared || data.mediaId == null)) reject('Invalid watch update.');
+  if (data.mediaId == null && data.title == null) return { shared: data.shared, mediaId: null, title: null };
+  const title = typeof data.title === 'string' ? data.title.trim() : '';
+  if (!data.shared || !Number.isSafeInteger(data.mediaId) || data.mediaId < 1 || !title || title.length > 240 || /[\x00-\x1f\x7f]/.test(title)) reject('Invalid anime title or media ID.');
+  return { shared: data.shared, mediaId: data.mediaId, title, automatic };
+}
+export function watchProfile(user) {
+  return { watchSharing: !!user.watch_shared, watchBadge: user.watch_shared && user.watch_media_id && user.watch_title && COLORS.includes(user.watch_color)
+    ? { mediaId: user.watch_media_id, title: user.watch_title, color: user.watch_color } : null };
+}
+export function watchColor(previous, random = Math.random) {
+  const choices = COLORS.filter(color => color !== previous);
+  return choices[Math.floor(random() * choices.length)];
+}
 function reject(message) { throw Object.assign(new Error(message), { status: 400 }); }
 export function validateProfile(data) {
   const name = typeof data.name === 'string' ? data.name.trim() : '';

@@ -29,7 +29,7 @@ for (const platform of ['Node', 'Cloudflare']) test(platform + ': replies, recip
     t.after(() => mf.dispose());
     const db = await mf.getD1Database('DB');
     expirePresence = userId => db.prepare('UPDATE presence SET seen_at=? WHERE user_id=?').bind(Date.now()-46000,userId).run();
-    for (const name of ['0001_chat.sql', '0002_profiles.sql', '0003_replies.sql', '0004_message_edits.sql', '0005_media.sql', '0006_spoilers_presence.sql']) {
+    for (const name of ['0001_chat.sql', '0002_profiles.sql', '0003_replies.sql', '0004_message_edits.sql', '0005_media.sql', '0006_spoilers_presence.sql', '0007_watch_badge.sql']) {
       const sql = readFileSync(new URL('../cloudflare/migrations/' + name, import.meta.url), 'utf8');
       const statements = sql.split(/;\s*(?=CREATE|INSERT|PRAGMA|ALTER|UPDATE|$)/).filter(s => s.trim());
       await db.batch(statements.map(s => db.prepare(s)));
@@ -45,6 +45,22 @@ for (const platform of ['Node', 'Cloudflare']) test(platform + ': replies, recip
   assert.equal((await call('/replies')).status, 401);
   const alice = (await call('/sessions', 'POST', '', { name: 'Alice' })).data;
   const bob = (await call('/sessions', 'POST', '', { name: 'Bob' })).data;
+  assert.equal((await call('/watch-badge','PUT','',{shared:true})).status,401);
+  assert.equal((await call('/profile','GET',alice.token)).data.watchSharing,false);
+  assert.equal((await call('/watch-badge','PUT',alice.token,{shared:'yes'})).status,400);
+  assert.equal((await call('/watch-badge','PUT',alice.token,{shared:true,mediaId:1,title:'bad\nname'})).status,400);
+  const watchA=(await call('/watch-badge','PUT',alice.token,{shared:true,mediaId:21,title:'One Piece',color:'#000000'})).data;
+  assert.equal(watchA.watchSharing,true);assert.equal(watchA.watchBadge.title,'One Piece');
+  assert.ok(['#a78bfa','#f472b6','#60a5fa','#34d399','#fbbf24','#fb923c','#22d3ee'].includes(watchA.watchBadge.color));
+  const sameWatch=(await call('/watch-badge','PUT',alice.token,{shared:true,mediaId:21,title:'One Piece'})).data;
+  assert.equal(sameWatch.watchBadge.color,watchA.watchBadge.color,'polling and new episodes keep the saved color');
+  const watchB=(await call('/watch-badge','PUT',alice.token,{shared:true,mediaId:154587,title:'Frieren'})).data;
+  assert.notEqual(watchB.watchBadge.color,watchA.watchBadge.color,'switching anime changes color');
+  await call('/watch-badge','PUT',alice.token,{shared:false});
+  assert.equal((await call('/watch-badge','PUT',alice.token,{shared:true,automatic:true,mediaId:21,title:'One Piece'})).data.watchSharing,false,'a stale automatic update cannot re-enable sharing');
+  assert.equal((await call('/profile','GET',alice.token)).data.watchBadge,null);
+  const restored=(await call('/watch-badge','PUT',alice.token,{shared:true})).data;
+  assert.equal(restored.watchBadge.color,watchB.watchBadge.color,'hide and show does not reroll the same anime');
   assert.equal((await call('/presence', 'POST', '', {open:true})).status, 401);
   assert.equal((await call('/presence', 'POST', alice.token, {open:'yes'})).status, 400);
   assert.equal((await call('/presence', 'POST', alice.token, {open:true})).data.activeCount, 1);
@@ -65,6 +81,10 @@ for (const platform of ['Node', 'Cloudflare']) test(platform + ': replies, recip
   const messages = (await call('/messages', 'GET', alice.token)).data.messages;
   assert.equal(messages[0].reply, null);
   assert.equal(messages[0].spoiler,true);
+  assert.deepEqual(messages[0].watchBadge,restored.watchBadge,'other users receive the same saved badge');
+  await call('/watch-badge','PUT',alice.token,{shared:false});
+  const hidden=(await call('/messages','GET',bob.token)).data.messages[0];
+  assert.equal(hidden.watchBadge,null);assert.equal(hidden.watch_title,undefined);assert.equal(hidden.watch_media_id,undefined);
   assert.equal(messages[1].spoiler,false);
   assert.deepEqual(messages[1].reply, { messageId: original.data.id, userId: alice.userId, available: true, spoiler: true, name: 'Alice', text: 'Original text' });
   assert.deepEqual((await call('/replies?after=0', 'GET', alice.token)).data.replies.map(r => r.id), [response.data.id]);

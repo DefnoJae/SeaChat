@@ -33,6 +33,7 @@ test('Cloudflare runtime: shared D1 history, quiet polls, moderation, races, ret
   await db.prepare(readFileSync(new URL('../cloudflare/migrations/0004_message_edits.sql', import.meta.url), 'utf8')).run();
   await db.prepare(readFileSync(new URL('../cloudflare/migrations/0005_media.sql', import.meta.url), 'utf8')).run();
   await db.batch(readFileSync(new URL('../cloudflare/migrations/0006_spoilers_presence.sql', import.meta.url), 'utf8').split(';').filter(s => s.trim()).map(s => db.prepare(s)));
+  await db.batch(readFileSync(new URL('../cloudflare/migrations/0007_watch_badge.sql', import.meta.url), 'utf8').split(';').filter(s => s.trim()).map(s => db.prepare(s)));
   async function call(path, method = 'GET', token = '', data, ip = '192.0.2.1') {
     const response = await mf.dispatchFetch('https://seachat.example.com' + path, {
       method, headers: { Authorization: 'Bearer ' + token, 'CF-Connecting-IP': ip },

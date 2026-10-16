@@ -7,6 +7,8 @@ function init() {
     let queue = Promise.resolve(), latestMessages = [], replyCursor = 0, cursorKey = "";
     let readCursor = 0, readKey = "", firstVisit = false, identityReady = false, nextClosedPoll = 0, failures = 0;
     const avatars = new Map();
+    let nextWatchCheck = 0;
+    const watchSupported = !!ctx.continuity && typeof ctx.continuity.getWatchHistory === 'function' && !!ctx.anime && typeof ctx.anime.getAnimeEntry === 'function';
     let notificationKey='', notificationCursor=0, readingLatest=false;
     let notificationSettings={mode:'all',desktop:true,hideText:true,pauseWhileOpen:true,muteUntil:0};
     function cleanNotifications(value){value=value||{};return {mode:['replies','all','off'].includes(value.mode)?value.mode:'all',desktop:value.desktop!==false,hideText:value.hideText!==false,pauseWhileOpen:value.pauseWhileOpen!==false,muteUntil:Number.isFinite(value.muteUntil)&&value.muteUntil>0?value.muteUntil:0};}
@@ -56,7 +58,7 @@ function init() {
       notificationKey='notifications:'+base+':'+profile.userId;
       notificationSettings=cleanNotifications($storage.get(notificationKey));
       notificationCursor=(await request('/activity?after=0')).latestId;
-      update({ joined: true, profile, notificationSettings, notificationsSupported:!!ctx.notification&&typeof ctx.notification.send==='function' });
+      update({ joined: true, profile, watchSupported, notificationSettings, notificationsSupported:!!ctx.notification&&typeof ctx.notification.send==='function' });
     }
     panel.channel.sync("chat", state);
     panel.setContent(() => content);
@@ -67,6 +69,31 @@ function init() {
       return result;
     }
     function notice(error) { update({ notice: String(error.message || error), noticeId: state.get().noticeId + 1 }); }
+    function applyWatchProfile(result) {
+      const profile=Object.assign({},state.get().profile,result);
+      const apply=m=>m.userId===profile.userId?Object.assign({},m,{watchBadge:result.watchBadge}):m;
+      latestMessages=latestMessages.map(apply);
+      update({profile,messages:state.get().messages.map(apply)});revision='';
+    }
+    async function syncWatchBadge(force) {
+      const profile=state.get().profile;
+      if(!profile || !profile.watchSharing || (!force && Date.now()<nextWatchCheck))return;
+      nextWatchCheck=Date.now()+30000;
+      if(!watchSupported){update({watchStatus:'Watch history is unavailable in this Seanime client. You can still hide an existing badge.'});return;}
+      try {
+        const history=await ctx.continuity.getWatchHistory();
+        const items=Object.values(history||{}).filter(item=>Number.isSafeInteger(item.mediaId)&&item.mediaId>0)
+          .map(item=>({item,time:Date.parse(item.timeUpdated||item.timeAdded||'')})).filter(row=>Number.isFinite(row.time)).sort((a,b)=>b.time-a.time);
+        if(!items.length){update({watchStatus:'No recorded anime yet. The badge will appear after Seanime records your watching progress.'});return;}
+        const mediaId=items[0].item.mediaId;
+        if(profile.watchBadge && profile.watchBadge.mediaId===mediaId){update({watchStatus:''});return;}
+        const entry=await ctx.anime.getAnimeEntry(mediaId),titles=entry&&entry.media&&entry.media.title;
+        const title=titles&&(titles.userPreferred||titles.english||titles.romaji||titles.native);
+        if(typeof title!=='string'||!title.trim())throw new Error('Anime title unavailable');
+        const result=await request('/watch-badge','PUT',{shared:true,automatic:true,mediaId,title:title.trim().slice(0,240)});
+        applyWatchProfile(result);update({watchStatus:''});
+      }catch(e){update({watchStatus:'Could not update your watching badge. SeaChat will retry automatically.'});}
+    }
     async function hydrate(messages) {
       const unique = new Map();
       messages.forEach(m => { if (m.avatarVersion) unique.set(m.userId, m.avatarVersion); });
@@ -89,6 +116,7 @@ function init() {
     }
     async function refreshNow() {
       if (!token) return;
+      await syncWatchBadge(false);
       if(mounted)await presence(true);
       try {
         const result = await request("/messages?after=" + readCursor + (revision ? "&revision=" + encodeURIComponent(revision) : ""));
@@ -142,6 +170,7 @@ function init() {
         return serial(async () => {
           try {
             if (!identityReady) await prepareIdentity();
+            await syncWatchBadge(false);
             const activity=await request('/activity?after='+readCursor);await checkNotifications(activity);setActivity(activity); failures=0;
           } catch (e) {
             failures++;
@@ -168,7 +197,7 @@ function init() {
       update({ contextId: null }); await refreshNow();
     }));
     panel.channel.on("profile", data => action("profile", async () => {
-      const profile = await request("/profile", "PUT", { name: data.name, color: data.color, avatar: data.avatar });
+      const profile = Object.assign({},state.get().profile,await request("/profile", "PUT", { name: data.name, color: data.color, avatar: data.avatar }));
       avatars.set(profile.userId + ":" + profile.avatarVersion, profile.avatar);
       const apply = m => m.userId === profile.userId ? Object.assign({}, m, { name: profile.name, color: profile.color, avatar: profile.avatar, avatarVersion: profile.avatarVersion }) : m;
       latestMessages = latestMessages.map(apply);
@@ -224,6 +253,13 @@ function init() {
       catch(e){update({mediaResponse:{requestId:data.requestId,error:String(e.message)}});}
     });
     panel.channel.on('reading',data=>{readingLatest=!!data.latest;});
+    panel.channel.on('watchSharing',data=>action('watchSharing',async()=>{
+      if(typeof data.shared!=='boolean')throw new Error('Choose whether to share your watch badge.');
+      const result=await request('/watch-badge','PUT',{shared:data.shared});
+      applyWatchProfile(result);nextWatchCheck=0;
+      if(data.shared)await syncWatchBadge(true);else update({watchStatus:''});
+      await refreshNow();
+    }));
     panel.channel.on('notificationSettings',data=>{if(!notificationKey)return;notificationSettings=cleanNotifications(data);$storage.set(notificationKey,notificationSettings);update({notificationSettings});});
     panel.channel.on('testNotification',()=>{if(ctx.notification&&typeof ctx.notification.send==='function'){try{ctx.notification.send('SeaChat notifications are enabled. Sound follows your system notification settings.');}catch(e){notice(new Error('Unable to send a desktop notification.'));}}else notice(new Error('Desktop notifications are unavailable in this Seanime client.'));});
     panel.channel.on("ready", () => update({}));

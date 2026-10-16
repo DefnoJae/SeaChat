@@ -1,5 +1,11 @@
 # SeaChat
 
+From v0.9.0, Profile settings → **Watching badge** lets you opt in to sharing your last-watched anime beside your username. Sharing is off by default. “Watching” means the most recent anime recorded in Seanime’s watch history, not a live playback indicator. No episode, progress, filename or file path is uploaded. The extension checks locally about every 30 seconds while Seanime is running and sharing is enabled.
+
+Badge colors are randomly selected independently of username colors and saved on the server, so everyone sees the same color. Switching anime chooses a different badge color; another episode of the same anime keeps it. Long titles truncate beside the name; hover for the full title or click/tap for details. Disabling sharing hides the badge on all retained messages; its last ID/title/color remain private so re-enabling the same anime keeps its color. A stale automatic update cannot re-enable a hidden badge.
+
+Authenticated `PUT /watch-badge` accepts `{shared:boolean}` to change visibility, or `{shared:true,mediaId:number,title:string}` to update the anime. Automatic updates add `automatic:true` and only apply while sharing is already enabled. Badge colors are chosen by the server; supplied client colors are ignored. Profiles include `watchSharing` and nullable `watchBadge`; messages include only the public nullable badge. The additive `0007_watch_badge.sql` migration is required before deploying the updated Worker. The optional Node backend adds these columns automatically.
+
 One public chat room for everyone who installs this Seanime extension. A purple chat icon opens the room in Seanime's tray.
 
 **Hosting:** Cloudflare Workers + D1 on the **Workers Free plan**. A free `workers.dev` HTTPS address is included, so you do not need to buy a domain or keep your computer online. The old paid Render blueprint has been removed.

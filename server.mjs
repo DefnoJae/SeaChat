@@ -5,7 +5,7 @@ import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { COLORS, validateProfile, validateReport } from './profile.mjs';
+import { COLORS, validateProfile, validateReport, validateWatchBadge, watchProfile, watchColor } from './profile.mjs';
 import { MESSAGE_SELECT, ACTIVITY_SELECT, messageRows, messageId, afterId } from './messages.mjs';
 
 import { messageContent } from './media.mjs';
@@ -18,6 +18,7 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
     CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, text TEXT, created_at TEXT);
     CREATE TABLE IF NOT EXISTS reports (message_id INTEGER, user_id INTEGER, created_at TEXT, PRIMARY KEY(message_id,user_id));`);
   for (const [table, column, definition] of [
+    ['users','watch_shared','INTEGER NOT NULL DEFAULT 0'], ['users','watch_media_id','INTEGER'], ['users','watch_title',"TEXT NOT NULL DEFAULT ''"], ['users','watch_color',"TEXT NOT NULL DEFAULT ''"],
     ['users','color',"TEXT NOT NULL DEFAULT '#a78bfa'"], ['users','avatar',"TEXT NOT NULL DEFAULT ''"],
     ['users','avatar_version',"TEXT NOT NULL DEFAULT ''"], ['reports','reason',"TEXT NOT NULL DEFAULT 'Other'"], ['reports','details',"TEXT NOT NULL DEFAULT ''"],
     ['messages','reply_to_id','INTEGER'], ['messages','reply_to_user_id','INTEGER'], ['messages','attachment','TEXT'], ['messages','spoiler','INTEGER NOT NULL DEFAULT 0']
@@ -92,9 +93,16 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
         const result = db.prepare('INSERT INTO users(token,name,color) VALUES(?,?,?)').run(hash(token), name, COLORS[randomBytes(1)[0] % COLORS.length]);
         return reply(res, 201, { token, userId: Number(result.lastInsertRowid), name });
       }
-      const user = credential ? db.prepare('SELECT id,name,banned,color,avatar,avatar_version FROM users WHERE token=?').get(hash(credential)) : null;
+      const user = credential ? db.prepare('SELECT id,name,banned,color,avatar,avatar_version,watch_shared,watch_media_id,watch_title,watch_color FROM users WHERE token=?').get(hash(credential)) : null;
       if (!user) fail(401, 'Join the room first.');
       if (user.banned) fail(403, 'This account has been banned.');
+      if(req.method === 'PUT' && url.pathname === '/watch-badge'){
+        throttle('watch-badge:'+user.id,20,60_000);
+        const badge=validateWatchBadge(await body(req));
+        const color=badge.mediaId!==null&&badge.mediaId!==user.watch_media_id?watchColor(user.watch_color):user.watch_color;
+        db.prepare('UPDATE users SET watch_shared=?,watch_color=CASE WHEN ? IS NOT NULL AND (watch_media_id IS NULL OR watch_media_id<>?) THEN ? ELSE watch_color END,watch_media_id=COALESCE(?,watch_media_id),watch_title=COALESCE(?,watch_title) WHERE id=? AND banned=0 AND (?=0 OR watch_shared=1)').run(Number(badge.shared),badge.mediaId,badge.mediaId,color,badge.mediaId,badge.title,user.id,Number(badge.automatic||false));
+        return reply(res,200,watchProfile(db.prepare('SELECT * FROM users WHERE id=?').get(user.id)));
+      }
       if(req.method === 'POST' && url.pathname === '/presence'){
         const data=await body(req);if(typeof data.open!=='boolean')fail(400,'Invalid presence state.');
         const now=Date.now();
@@ -137,13 +145,13 @@ export function createChatServer({ dbPath = 'data/chat.sqlite', adminToken = pro
         if (!rows.some(m => m.id === id)) fail(404, 'Message is no longer available.');
         return reply(res, 200, { messages: messageRows(rows), targetId: id });
       }
-      if (req.method === 'GET' && url.pathname === '/profile') return reply(res, 200, { userId: user.id, name: user.name, color: user.color, avatar: user.avatar, avatarVersion: user.avatar_version });
+      if (req.method === 'GET' && url.pathname === '/profile') return reply(res, 200, { userId: user.id, name: user.name, color: user.color, avatar: user.avatar, avatarVersion: user.avatar_version, ...watchProfile(user) });
       if (req.method === 'PUT' && url.pathname === '/profile') {
         throttle('profile:' + user.id, 20, 60_000);
         const profile = validateProfile(await body(req, 36000));
         const version = profile.avatar === user.avatar ? user.avatar_version : randomBytes(16).toString('hex');
         db.prepare('UPDATE users SET name=?,color=?,avatar=?,avatar_version=? WHERE id=?').run(profile.name, profile.color, profile.avatar, version, user.id);
-        return reply(res, 200, { userId: user.id, ...profile, avatarVersion: version });
+        return reply(res, 200, { userId: user.id, ...profile, avatarVersion: version, ...watchProfile(user) });
       }
       if (req.method === 'GET' && /^\/avatars\/\d+$/.test(url.pathname)) {
         const profile = db.prepare('SELECT avatar,avatar_version FROM users WHERE id=? AND banned=0').get(Number(url.pathname.split('/').pop()));
